@@ -199,7 +199,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let render_stat = |f: &mut Frame, area: Rect, label: &str, value: &str, subtitle: &str, value_color: Color| {
         let inner = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
         let inner_chunks = Layout::vertical([
-            Constraint::Length(1), // inner top padding
             Constraint::Length(1), // label
             Constraint::Length(1), // value
             Constraint::Length(1), // subtitle
@@ -218,19 +217,19 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             Paragraph::new(label)
                 .style(Style::default().fg(MUTED).bg(BG2))
                 .alignment(Alignment::Center),
-            inner_chunks[1],
+            inner_chunks[0],
         );
         f.render_widget(
             Paragraph::new(value.to_owned())
                 .style(Style::default().fg(value_color).bg(BG2).add_modifier(Modifier::BOLD))
                 .alignment(Alignment::Center),
-            inner_chunks[2],
+            inner_chunks[1],
         );
         f.render_widget(
             Paragraph::new(subtitle.to_owned())
                 .style(Style::default().fg(Color::Rgb(79, 87, 94)).bg(BG2))
                 .alignment(Alignment::Center),
-            inner_chunks[3],
+            inner_chunks[2],
         );
     };
 
