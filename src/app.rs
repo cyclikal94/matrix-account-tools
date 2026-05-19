@@ -411,7 +411,7 @@ async fn handle_main_key(app: &mut App, code: KeyCode) {
         return;
     }
 
-    if code == KeyCode::Char(':') {
+    if code == KeyCode::Char(':') && !is_text_input_active(app) {
         app.command_bar = Some(CommandBarState::default());
         return;
     }
@@ -428,4 +428,16 @@ async fn handle_main_key(app: &mut App, code: KeyCode) {
         ActiveTool::Profile => profile::handle(app, code).await,
         ActiveTool::Devices => devices::handle(app, code).await,
     }
+}
+
+fn is_text_input_active(app: &App) -> bool {
+    use crate::tools::devices::DeleteDialogState;
+    app.rooms_tool.detail.editing.is_some()
+        || app.rooms_tool.members.as_ref().map_or(false, |m| m.pl_edit.is_some())
+        || app.ignore_list.add_prompt.is_some()
+        || app.profile.is_editing()
+        || matches!(
+            app.devices.delete_dialog,
+            Some((_, DeleteDialogState::EnterPassword(_)))
+        )
 }

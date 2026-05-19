@@ -1001,7 +1001,6 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
         Constraint::Length(1),  // gap
         Constraint::Length(2),  // info (room ID + members)
         Constraint::Length(1),  // status
-        Constraint::Min(0),     // hints
     ])
     .split(area);
 
@@ -1052,18 +1051,6 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
         Paragraph::new("")
     };
     f.render_widget(status, chunks[5]);
-
-    let hint = if detail.editing.is_some() {
-        "Enter save  •  Esc discard"
-    } else {
-        "Tab/j/k field  •  e/Enter edit  •  m members  •  d leave  •  Esc/q back"
-    };
-    f.render_widget(
-        Paragraph::new(hint)
-            .style(Style::default().fg(MUTED))
-            .alignment(Alignment::Center),
-        chunks[6],
-    );
 
     if detail.confirm_leave {
         draw_confirm_leave(f, room.display_name.as_str());

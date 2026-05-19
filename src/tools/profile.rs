@@ -234,7 +234,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(3), // avatar url
         Constraint::Length(1), // gap
         Constraint::Length(1), // status line
-        Constraint::Min(0),    // hints
     ])
     .split(area);
 
@@ -321,19 +320,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         Paragraph::new("")
     };
     f.render_widget(status, chunks[5]);
-
-    // Hint row.
-    let hint = if app.profile.is_editing() {
-        "Enter save  •  Esc discard  •  Tab next field"
-    } else {
-        "Tab/j/k switch field  •  e/Enter edit  •  r reload  •  Esc/q home"
-    };
-    f.render_widget(
-        Paragraph::new(hint)
-            .style(Style::default().fg(MUTED))
-            .alignment(Alignment::Center),
-        chunks[6],
-    );
 }
 
 pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
