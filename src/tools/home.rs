@@ -46,7 +46,6 @@ pub async fn handle(app: &mut App, code: KeyCode) {
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
-    // Derive display info from app state.
     let display_name = app
         .profile
         .display_name
@@ -98,7 +97,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         format!("{} device(s)", device_count)
     };
 
-    // Commands to display: skip "help", "login", "home", "quit".
     let show_commands: Vec<(&str, &str)> = COMMANDS
         .iter()
         .filter(|(cmd, _)| !matches!(*cmd, "help" | "login" | "home" | "quit"))
@@ -106,19 +104,20 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         .collect();
     let cmd_rows = show_commands.chunks(2).count() as u16;
 
-    // Layout.
+    // Layout — generous vertical rhythm matching the design.
     let sep_width = area.width.saturating_sub(4);
     let chunks = Layout::vertical([
-        Constraint::Length(1), // padding
-        Constraint::Length(1), // "WELCOME BACK" label
-        Constraint::Length(1), // display name
-        Constraint::Length(1), // subtitle
-        Constraint::Length(1), // separator
-        Constraint::Length(5), // stats grid
-        Constraint::Length(1), // gap
-        Constraint::Length(1), // "COMMANDS" header
-        Constraint::Length(cmd_rows), // command rows
-        Constraint::Min(0),    // padding
+        Constraint::Length(2), // [0] top padding
+        Constraint::Length(1), // [1] "WELCOME BACK" label
+        Constraint::Length(1), // [2] display name
+        Constraint::Length(1), // [3] subtitle
+        Constraint::Length(1), // [4] separator line
+        Constraint::Length(1), // [5] gap below separator
+        Constraint::Length(6), // [6] stats grid (taller boxes with inner padding)
+        Constraint::Length(2), // [7] gap before commands
+        Constraint::Length(1), // [8] "COMMANDS" header
+        Constraint::Length(cmd_rows), // [9] command rows
+        Constraint::Min(0),    // [10] trailing space
     ])
     .split(area);
 
@@ -157,29 +156,29 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         Rect::new(area.x + 2, chunks[3].y, chunks[3].width.saturating_sub(4), 1),
     );
 
-    // Separator (dashed line).
     let sep_str = "─".repeat(sep_width as usize);
     f.render_widget(
         Paragraph::new(sep_str).style(Style::default().fg(BORDER)),
         Rect::new(area.x + 2, chunks[4].y, sep_width, 1),
     );
 
-    // Stats grid: 4 equal columns.
+    // Stats grid: 4 equal columns, taller boxes with inner top padding.
     let stat_cols = Layout::horizontal([
         Constraint::Ratio(1, 4),
         Constraint::Ratio(1, 4),
         Constraint::Ratio(1, 4),
         Constraint::Ratio(1, 4),
     ])
-    .split(chunks[5]);
+    .split(chunks[6]);
 
     let render_stat = |f: &mut Frame, area: Rect, label: &str, value: &str, subtitle: &str, value_color: Color| {
         let inner = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
         let inner_chunks = Layout::vertical([
+            Constraint::Length(1), // inner top padding
             Constraint::Length(1), // label
             Constraint::Length(1), // value
             Constraint::Length(1), // subtitle
-            Constraint::Min(0),    // padding
+            Constraint::Min(0),
         ])
         .split(inner);
 
@@ -193,17 +192,17 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(
             Paragraph::new(label)
                 .style(Style::default().fg(MUTED).bg(BG2)),
-            inner_chunks[0],
+            inner_chunks[1],
         );
         f.render_widget(
             Paragraph::new(value.to_owned())
                 .style(Style::default().fg(value_color).bg(BG2).add_modifier(Modifier::BOLD)),
-            inner_chunks[1],
+            inner_chunks[2],
         );
         f.render_widget(
             Paragraph::new(subtitle.to_owned())
                 .style(Style::default().fg(Color::Rgb(79, 87, 94)).bg(BG2)),
-            inner_chunks[2],
+            inner_chunks[3],
         );
     };
 
@@ -220,10 +219,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     // Commands section.
     f.render_widget(
         Paragraph::new("COMMANDS").style(Style::default().fg(MUTED)),
-        Rect::new(area.x + 2, chunks[7].y, chunks[7].width.saturating_sub(4), 1),
+        Rect::new(area.x + 2, chunks[8].y, chunks[8].width.saturating_sub(4), 1),
     );
 
-    let cmd_area = Rect::new(area.x + 2, chunks[8].y, chunks[8].width.saturating_sub(4), chunks[8].height);
+    let cmd_area = Rect::new(area.x + 2, chunks[9].y, chunks[9].width.saturating_sub(4), chunks[9].height);
     for (row_idx, pair) in show_commands.chunks(2).enumerate() {
         let row_y = cmd_area.y + row_idx as u16;
         if row_y >= cmd_area.y + cmd_area.height {
@@ -239,17 +238,12 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             ]);
             let cell_area = Rect::new(cols[col_idx].x, row_y, cols[col_idx].width, 1);
 
-            // Highlight selected command.
             let selected_cmd = crate::app::HOME_TOOLS
                 .get(app.home.selected)
                 .map(|(_, c)| *c)
                 .unwrap_or("");
             let is_selected = *cmd == selected_cmd;
-            let style = if is_selected {
-                Style::default().bg(BG3)
-            } else {
-                Style::default().bg(BG)
-            };
+            let style = if is_selected { Style::default().bg(BG3) } else { Style::default().bg(BG) };
             f.render_widget(Paragraph::new(line).style(style), cell_area);
         }
     }
