@@ -43,15 +43,29 @@ pub async fn handle(app: &mut App, code: KeyCode) {
     }
 }
 
+fn fmt_elapsed(inst: std::time::Instant) -> String {
+    let secs = inst.elapsed().as_secs();
+    match secs {
+        0..=59 => format!("{}s", secs),
+        60..=3599 => format!("{}m", secs / 60),
+        _ => format!("{}h", secs / 3600),
+    }
+}
+
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
+    // Use localpart (not full MXID) as display name fallback.
     let display_name = app
         .profile
         .display_name
         .as_deref()
-        .or(app.current_user_id.as_deref())
-        .unwrap_or("—");
+        .unwrap_or_else(|| {
+            app.current_user_id
+                .as_deref()
+                .and_then(|uid| uid.trim_start_matches('@').split(':').next())
+                .unwrap_or("—")
+        });
 
     let account_str = match (&app.current_user_id, &app.matrix) {
         (Some(uid), Some(client)) => {
@@ -104,29 +118,31 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         .collect();
     let cmd_rows = show_commands.chunks(2).count() as u16;
 
-    // Layout — generous vertical rhythm matching the design.
-    let sep_width = area.width.saturating_sub(4);
+    // Layout — extra blank rows give the design's breathing room.
     let chunks = Layout::vertical([
-        Constraint::Length(2), // [0] top padding
+        Constraint::Length(1), // [0] top padding
         Constraint::Length(1), // [1] "WELCOME BACK" label
-        Constraint::Length(1), // [2] display name
-        Constraint::Length(1), // [3] subtitle
-        Constraint::Length(1), // [4] separator line
-        Constraint::Length(1), // [5] gap below separator
-        Constraint::Length(6), // [6] stats grid (taller boxes with inner padding)
-        Constraint::Length(2), // [7] gap before commands
-        Constraint::Length(1), // [8] "COMMANDS" header
-        Constraint::Length(cmd_rows), // [9] command rows
-        Constraint::Min(0),    // [10] trailing space
+        Constraint::Length(1), // [2] blank
+        Constraint::Length(1), // [3] display name
+        Constraint::Length(1), // [4] blank
+        Constraint::Length(1), // [5] subtitle ("signed in as …")
+        Constraint::Length(1), // [6] separator line
+        Constraint::Length(1), // [7] gap
+        Constraint::Length(6), // [8] stats grid (taller boxes)
+        Constraint::Length(2), // [9] gap before commands
+        Constraint::Length(1), // [10] "COMMANDS" header
+        Constraint::Length(cmd_rows), // [11] command rows
+        Constraint::Min(0),    // [12] trailing space
     ])
     .split(area);
 
     // Hero section.
+    let pad = area.x + 2;
+    let w = area.width.saturating_sub(4);
+
     f.render_widget(
-        Paragraph::new("WELCOME BACK")
-            .style(Style::default().fg(MUTED))
-            .alignment(Alignment::Left),
-        Rect::new(area.x + 2, chunks[1].y, chunks[1].width.saturating_sub(4), 1),
+        Paragraph::new("WELCOME BACK").style(Style::default().fg(MUTED)),
+        Rect::new(pad, chunks[1].y, w, 1),
     );
 
     f.render_widget(
@@ -134,42 +150,51 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("▌ ", Style::default().fg(ACCENT)),
             Span::styled(
                 display_name.to_owned(),
-                Style::default()
-                    .fg(Color::Rgb(237, 239, 242))
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Rgb(237, 239, 242)).add_modifier(Modifier::BOLD),
             ),
         ])),
-        Rect::new(area.x + 2, chunks[2].y, chunks[2].width.saturating_sub(4), 1),
+        Rect::new(pad, chunks[3].y, w, 1),
     );
 
-    let signed_in_spans = if app.matrix.is_some() {
+    // Subtitle: "signed in as @user · session restored · last sync Xs ago"
+    let last_sync_part = match app.last_sync_at {
+        Some(t) => format!("  ·  last sync {} ago", fmt_elapsed(t)),
+        None if app.matrix.is_some() => "  ·  syncing…".to_owned(),
+        None => String::new(),
+    };
+    let subtitle_spans = if app.matrix.is_some() {
         vec![
             Span::styled("signed in as ", Style::default().fg(Color::Rgb(79, 87, 94))),
             Span::styled(account_str, Style::default().fg(MUTED)),
             Span::styled("  ·  session restored", Style::default().fg(Color::Rgb(79, 87, 94))),
+            Span::styled(last_sync_part, Style::default().fg(Color::Rgb(79, 87, 94))),
         ]
     } else {
         vec![Span::styled("not signed in", Style::default().fg(Color::Rgb(79, 87, 94)))]
     };
     f.render_widget(
-        Paragraph::new(Line::from(signed_in_spans)),
-        Rect::new(area.x + 2, chunks[3].y, chunks[3].width.saturating_sub(4), 1),
+        Paragraph::new(Line::from(subtitle_spans)),
+        Rect::new(pad, chunks[5].y, w, 1),
     );
 
-    let sep_str = "─".repeat(sep_width as usize);
+    // Separator.
     f.render_widget(
-        Paragraph::new(sep_str).style(Style::default().fg(BORDER)),
-        Rect::new(area.x + 2, chunks[4].y, sep_width, 1),
+        Paragraph::new("─".repeat(w as usize)).style(Style::default().fg(BORDER)),
+        Rect::new(pad, chunks[6].y, w, 1),
     );
 
-    // Stats grid: 4 equal columns, taller boxes with inner top padding.
+    // Stats grid: indented to match content, 1-char gaps between boxes, centered content.
+    let stats_area = Rect::new(pad, chunks[8].y, w, chunks[8].height);
     let stat_cols = Layout::horizontal([
         Constraint::Ratio(1, 4),
+        Constraint::Length(1),
         Constraint::Ratio(1, 4),
+        Constraint::Length(1),
         Constraint::Ratio(1, 4),
+        Constraint::Length(1),
         Constraint::Ratio(1, 4),
     ])
-    .split(chunks[6]);
+    .split(stats_area);
 
     let render_stat = |f: &mut Frame, area: Rect, label: &str, value: &str, subtitle: &str, value_color: Color| {
         let inner = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
@@ -191,20 +216,31 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         );
         f.render_widget(
             Paragraph::new(label)
-                .style(Style::default().fg(MUTED).bg(BG2)),
+                .style(Style::default().fg(MUTED).bg(BG2))
+                .alignment(Alignment::Center),
             inner_chunks[1],
         );
         f.render_widget(
             Paragraph::new(value.to_owned())
-                .style(Style::default().fg(value_color).bg(BG2).add_modifier(Modifier::BOLD)),
+                .style(Style::default().fg(value_color).bg(BG2).add_modifier(Modifier::BOLD))
+                .alignment(Alignment::Center),
             inner_chunks[2],
         );
         f.render_widget(
             Paragraph::new(subtitle.to_owned())
-                .style(Style::default().fg(Color::Rgb(79, 87, 94)).bg(BG2)),
+                .style(Style::default().fg(Color::Rgb(79, 87, 94)).bg(BG2))
+                .alignment(Alignment::Center),
             inner_chunks[3],
         );
     };
+
+    // Fill the gap columns with BG2 so borders don't float on BG.
+    for gap_idx in [1usize, 3, 5] {
+        f.render_widget(
+            Block::default().style(Style::default().bg(BG)),
+            stat_cols[gap_idx],
+        );
+    }
 
     let unread_color = if total_unread > 0 { ACCENT } else { Color::Rgb(115, 125, 133) };
     let mentions_color = if total_mentions > 0 { DANGER } else { Color::Rgb(115, 125, 133) };
@@ -212,17 +248,17 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let device_color = if device_count > 0 { Color::Rgb(237, 239, 242) } else { Color::Rgb(115, 125, 133) };
 
     render_stat(f, stat_cols[0], "ROOMS JOINED", &room_count.to_string(), &rooms_subtitle, Color::Rgb(237, 239, 242));
-    render_stat(f, stat_cols[1], "UNREAD", &total_unread.to_string(), "messages", unread_color);
-    render_stat(f, stat_cols[2], "MENTIONS", &total_mentions.to_string(), "highlights", mentions_color);
-    render_stat(f, stat_cols[3], "DEVICES", &device_value, &devices_subtitle, device_color);
+    render_stat(f, stat_cols[2], "UNREAD", &total_unread.to_string(), "messages", unread_color);
+    render_stat(f, stat_cols[4], "MENTIONS", &total_mentions.to_string(), "highlights", mentions_color);
+    render_stat(f, stat_cols[6], "DEVICES", &device_value, &devices_subtitle, device_color);
 
     // Commands section.
     f.render_widget(
         Paragraph::new("COMMANDS").style(Style::default().fg(MUTED)),
-        Rect::new(area.x + 2, chunks[8].y, chunks[8].width.saturating_sub(4), 1),
+        Rect::new(pad, chunks[10].y, w, 1),
     );
 
-    let cmd_area = Rect::new(area.x + 2, chunks[9].y, chunks[9].width.saturating_sub(4), chunks[9].height);
+    let cmd_area = Rect::new(pad, chunks[11].y, w, chunks[11].height);
     for (row_idx, pair) in show_commands.chunks(2).enumerate() {
         let row_y = cmd_area.y + row_idx as u16;
         if row_y >= cmd_area.y + cmd_area.height {

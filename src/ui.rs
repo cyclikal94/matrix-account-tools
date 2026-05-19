@@ -44,7 +44,7 @@ fn draw_main(f: &mut Frame, app: &App) {
 
     let footer_height: u16 = if app.command_bar.is_some() { 3 } else { 1 };
     let chunks = Layout::vertical([
-        Constraint::Length(1),
+        Constraint::Length(3), // header: 1 padding + 1 content + 1 padding
         Constraint::Min(1),
         Constraint::Length(footer_height),
     ])
@@ -74,6 +74,12 @@ fn draw_main(f: &mut Frame, app: &App) {
 // ---------------------------------------------------------------------------
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
+    // Fill entire 3-row header with background.
+    f.render_widget(Block::default().style(Style::default().bg(BG2)), area);
+
+    // Content only on the middle row.
+    let row = Rect::new(area.x, area.y + 1, area.width, 1);
+
     use crate::app::ActiveTool::*;
     let screen_name = match app.active_tool {
         Home => "home",
@@ -100,46 +106,32 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
     let sync_text = if app.matrix.is_some() { " ● sync " } else { " ● idle " };
 
-    // Split header into left (brand+screen) and right (sync+account).
     let right_content = format!("{sync_text} {account_str} ");
     let right_len = right_content.chars().count() as u16;
     let cols = Layout::horizontal([Constraint::Min(1), Constraint::Length(right_len)])
-        .split(area);
+        .split(row);
 
-    // Left: brand + screen name
     let left_line = Line::from(vec![
         Span::styled("▌ ", Style::default().fg(ACCENT).bg(BG2)),
         Span::styled(
             "matrix-account-tools",
-            Style::default()
-                .fg(Color::Rgb(237, 239, 242))
-                .bg(BG2)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Rgb(237, 239, 242)).bg(BG2).add_modifier(Modifier::BOLD),
         ),
         Span::styled("  ·  ", Style::default().fg(MUTED).bg(BG2)),
-        Span::styled(
-            screen_name,
-            Style::default().fg(ACCENT).bg(BG2),
-        ),
+        Span::styled(screen_name, Style::default().fg(ACCENT).bg(BG2)),
     ]);
     f.render_widget(
         Paragraph::new(left_line).style(Style::default().bg(BG2)),
         cols[0],
     );
 
-    // Right: sync pill + account
     let sync_color = if app.matrix.is_some() { ACCENT } else { MUTED };
     let right_line = Line::from(vec![
         Span::styled(sync_text, Style::default().fg(sync_color).bg(BG2)),
-        Span::styled(
-            format!(" {account_str} "),
-            Style::default().fg(MUTED).bg(BG2),
-        ),
+        Span::styled(format!(" {account_str} "), Style::default().fg(MUTED).bg(BG2)),
     ]);
     f.render_widget(
-        Paragraph::new(right_line)
-            .alignment(Alignment::Right)
-            .style(Style::default().bg(BG2)),
+        Paragraph::new(right_line).alignment(Alignment::Right).style(Style::default().bg(BG2)),
         cols[1],
     );
 }

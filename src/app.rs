@@ -141,6 +141,7 @@ pub struct App {
     pub matrix: Option<MatrixClient>,
     pub current_user_id: Option<String>,
     pub sync_task: Option<tokio::task::JoinHandle<()>>,
+    pub last_sync_at: Option<std::time::Instant>,
 }
 
 impl App {
@@ -161,6 +162,7 @@ impl App {
             matrix: None,
             current_user_id: None,
             sync_task: None,
+            last_sync_at: None,
         };
 
         match MatrixClient::restore_current().await {
@@ -169,6 +171,7 @@ impl App {
                 app.current_user_id = Some(client.user_id());
                 app.matrix = Some(client);
                 app.screen = Screen::Main;
+                profile::start_load(&mut app);
             }
             Ok(None) => {}
             Err(e) => {
