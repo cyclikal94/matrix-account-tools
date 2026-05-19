@@ -71,7 +71,32 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let room_count = app.rooms_tool.rooms.len();
     let total_unread: u64 = app.rooms_tool.rooms.iter().map(|r| r.unread).sum();
     let total_mentions: u64 = app.rooms_tool.rooms.iter().map(|r| r.mentions).sum();
-    let sync_status = if app.matrix.is_some() { "running" } else { "idle" };
+
+    let server_count = {
+        let servers: std::collections::HashSet<&str> = app
+            .rooms_tool
+            .rooms
+            .iter()
+            .filter_map(|r| r.id.split(':').nth(1))
+            .collect();
+        servers.len()
+    };
+    let rooms_subtitle = if server_count <= 1 {
+        "joined rooms".to_owned()
+    } else {
+        format!("across {} servers", server_count)
+    };
+
+    let device_count = app.devices.devices.len();
+    let current_devices = app.devices.devices.iter().filter(|d| d.is_current).count();
+    let other_devices = device_count.saturating_sub(current_devices);
+    let devices_subtitle = if device_count == 0 {
+        "—".to_owned()
+    } else if other_devices > 0 {
+        format!("{} current · {} others", current_devices, other_devices)
+    } else {
+        format!("{} device(s)", device_count)
+    };
 
     // Commands to display: skip "help", "login", "home", "quit".
     let show_commands: Vec<(&str, &str)> = COMMANDS
@@ -85,11 +110,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let sep_width = area.width.saturating_sub(4);
     let chunks = Layout::vertical([
         Constraint::Length(1), // padding
-        Constraint::Length(1), // "ACCOUNT" label
+        Constraint::Length(1), // "WELCOME BACK" label
         Constraint::Length(1), // display name
         Constraint::Length(1), // subtitle
         Constraint::Length(1), // separator
-        Constraint::Length(4), // stats grid
+        Constraint::Length(5), // stats grid
         Constraint::Length(1), // gap
         Constraint::Length(1), // "COMMANDS" header
         Constraint::Length(cmd_rows), // command rows
@@ -99,7 +124,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     // Hero section.
     f.render_widget(
-        Paragraph::new("ACCOUNT")
+        Paragraph::new("WELCOME BACK")
             .style(Style::default().fg(MUTED))
             .alignment(Alignment::Left),
         Rect::new(area.x + 2, chunks[1].y, chunks[1].width.saturating_sub(4), 1),
@@ -118,11 +143,17 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         Rect::new(area.x + 2, chunks[2].y, chunks[2].width.saturating_sub(4), 1),
     );
 
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
+    let signed_in_spans = if app.matrix.is_some() {
+        vec![
+            Span::styled("signed in as ", Style::default().fg(Color::Rgb(79, 87, 94))),
             Span::styled(account_str, Style::default().fg(MUTED)),
-            Span::styled("  ·  signed in", Style::default().fg(Color::Rgb(79, 87, 94))),
-        ])),
+            Span::styled("  ·  session restored", Style::default().fg(Color::Rgb(79, 87, 94))),
+        ]
+    } else {
+        vec![Span::styled("not signed in", Style::default().fg(Color::Rgb(79, 87, 94)))]
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(signed_in_spans)),
         Rect::new(area.x + 2, chunks[3].y, chunks[3].width.saturating_sub(4), 1),
     );
 
@@ -142,13 +173,15 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     ])
     .split(chunks[5]);
 
-    let render_stat = |f: &mut Frame, area: Rect, label: &str, value: &str, value_color: Color| {
+    let render_stat = |f: &mut Frame, area: Rect, label: &str, value: &str, subtitle: &str, value_color: Color| {
+        let inner = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
         let inner_chunks = Layout::vertical([
             Constraint::Length(1), // label
             Constraint::Length(1), // value
+            Constraint::Length(1), // subtitle
             Constraint::Min(0),    // padding
         ])
-        .split(Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2)));
+        .split(inner);
 
         f.render_widget(
             Block::default()
@@ -167,15 +200,22 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 .style(Style::default().fg(value_color).bg(BG2).add_modifier(Modifier::BOLD)),
             inner_chunks[1],
         );
+        f.render_widget(
+            Paragraph::new(subtitle.to_owned())
+                .style(Style::default().fg(Color::Rgb(79, 87, 94)).bg(BG2)),
+            inner_chunks[2],
+        );
     };
 
     let unread_color = if total_unread > 0 { ACCENT } else { Color::Rgb(115, 125, 133) };
     let mentions_color = if total_mentions > 0 { DANGER } else { Color::Rgb(115, 125, 133) };
+    let device_value = if device_count > 0 { device_count.to_string() } else { "—".to_owned() };
+    let device_color = if device_count > 0 { Color::Rgb(237, 239, 242) } else { Color::Rgb(115, 125, 133) };
 
-    render_stat(f, stat_cols[0], "ROOMS JOINED", &room_count.to_string(), Color::Rgb(237, 239, 242));
-    render_stat(f, stat_cols[1], "UNREAD", &total_unread.to_string(), unread_color);
-    render_stat(f, stat_cols[2], "MENTIONS", &total_mentions.to_string(), mentions_color);
-    render_stat(f, stat_cols[3], "SYNC", sync_status, MUTED);
+    render_stat(f, stat_cols[0], "ROOMS JOINED", &room_count.to_string(), &rooms_subtitle, Color::Rgb(237, 239, 242));
+    render_stat(f, stat_cols[1], "UNREAD", &total_unread.to_string(), "messages", unread_color);
+    render_stat(f, stat_cols[2], "MENTIONS", &total_mentions.to_string(), "highlights", mentions_color);
+    render_stat(f, stat_cols[3], "DEVICES", &device_value, &devices_subtitle, device_color);
 
     // Commands section.
     f.render_widget(
@@ -217,12 +257,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
 pub fn hint_spans() -> Vec<Span<'static>> {
     vec![
-        Span::styled("j/k", Style::default().fg(ACCENT)),
-        Span::raw(" navigate  "),
-        Span::styled("Enter", Style::default().fg(ACCENT)),
-        Span::raw(" select  "),
         Span::styled(":", Style::default().fg(ACCENT)),
-        Span::raw(" command  "),
+        Span::raw(" cmd  "),
+        Span::styled("?", Style::default().fg(ACCENT)),
+        Span::raw(" help  "),
         Span::styled("q", Style::default().fg(ACCENT)),
         Span::raw(" quit"),
     ]
