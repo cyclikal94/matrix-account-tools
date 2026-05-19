@@ -55,7 +55,6 @@ fn draw_main(f: &mut Frame, app: &App) {
     use crate::app::ActiveTool::*;
     match app.active_tool {
         Home => tools::home::draw(f, app, chunks[1]),
-        LeaveRooms => tools::leave_rooms::draw(f, app, chunks[1]),
         Rooms => tools::rooms::draw(f, app, chunks[1]),
         Accounts => tools::accounts::draw(f, app, chunks[1]),
         IgnoreList => tools::ignore_list::draw(f, app, chunks[1]),
@@ -78,7 +77,6 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     use crate::app::ActiveTool::*;
     let tool_name = match app.active_tool {
         Home => tools::home::tool_name(),
-        LeaveRooms => tools::leave_rooms::tool_name(),
         Rooms => tools::rooms::tool_name(),
         Accounts => tools::accounts::tool_name(),
         IgnoreList => tools::ignore_list::tool_name(),
@@ -196,7 +194,6 @@ fn draw_hint_bar(f: &mut Frame, app: &App, area: Rect) {
     use crate::app::ActiveTool::*;
     let hints = match app.active_tool {
         Home => tools::home::hint_spans(),
-        LeaveRooms => tools::leave_rooms::hint_spans(app),
         Rooms => tools::rooms::hint_spans(app),
         Accounts => tools::accounts::hint_spans(),
         IgnoreList => tools::ignore_list::hint_spans(app),

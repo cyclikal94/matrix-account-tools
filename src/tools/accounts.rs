@@ -69,7 +69,7 @@ async fn do_switch_account(app: &mut App) {
             app.sync_task = Some(client.start_background_sync());
             app.current_user_id = Some(client.user_id());
             app.matrix = Some(client);
-            app.leave_rooms = crate::tools::leave_rooms::LeaveRoomsState::default();
+            app.rooms_tool = crate::tools::rooms::RoomBrowserState::default();
         }
         Ok(None) => {
             app.accounts_tool.error = Some("Account not found.".to_owned());
@@ -110,7 +110,7 @@ async fn do_remove_account(app: &mut App) {
                     }
                 }
             }
-            app.leave_rooms = crate::tools::leave_rooms::LeaveRoomsState::default();
+            app.rooms_tool = crate::tools::rooms::RoomBrowserState::default();
         }
         Err(e) => {
             app.accounts_tool.error = Some(format!("Remove failed: {e}"));

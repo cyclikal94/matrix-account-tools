@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use matrix_sdk::{
-    Client, RoomState,
+    Client, RoomMemberships, RoomState,
     authentication::matrix::MatrixSession,
     config::SyncSettings,
-    ruma::RoomId,
+    ruma::{RoomId, UserId},
 };
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -45,6 +45,15 @@ pub struct RoomInfo {
     pub member_count: u64,
     pub alias: Option<String>,
     pub topic: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemberInfo {
+    pub user_id: String,
+    pub display_name: Option<String>,
+    pub power_level: i64,
+    pub can_kick: bool,
+    pub can_ban: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -275,10 +284,15 @@ impl MatrixClient {
             };
             let alias = room.canonical_alias().map(|a| a.to_string());
             let topic = room.topic();
+            let member_count = room
+                .members_no_sync(RoomMemberships::JOIN)
+                .await
+                .map(|m| m.len() as u64)
+                .unwrap_or_else(|_| room.joined_members_count());
             infos.push(RoomInfo {
                 id: room.room_id().to_string(),
                 display_name,
-                member_count: room.joined_members_count(),
+                member_count,
                 alias,
                 topic,
             });
@@ -295,6 +309,90 @@ impl MatrixClient {
             .get_room(room_id)
             .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
         room.leave().await.context("Failed to leave room")
+    }
+
+    pub async fn get_room_members(&self, room_id_str: &str) -> Result<Vec<MemberInfo>> {
+        let room_id = <&RoomId>::try_from(room_id_str)
+            .with_context(|| format!("Invalid room ID: {room_id_str}"))?;
+        let room = self
+            .inner
+            .get_room(room_id)
+            .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
+        let own_id = self.inner.user_id().map(|id| id.to_owned());
+        let mut members = room
+            .members(RoomMemberships::JOIN)
+            .await
+            .context("Failed to fetch members")?;
+        members.sort_by(|a, b| {
+            b.normalized_power_level()
+                .cmp(&a.normalized_power_level())
+                .then(a.user_id().as_str().cmp(b.user_id().as_str()))
+        });
+        use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
+        Ok(members
+            .iter()
+            .filter(|m| own_id.as_deref() != Some(m.user_id()))
+            .map(|m| {
+                let power_level = match m.normalized_power_level() {
+                    UserPowerLevel::Infinite => 100,
+                    UserPowerLevel::Int(n) => i64::from(n),
+                    _ => 0,
+                };
+                MemberInfo {
+                    user_id: m.user_id().to_string(),
+                    display_name: m.display_name().map(|s| s.to_owned()),
+                    power_level,
+                    can_kick: m.can_kick(),
+                    can_ban: m.can_ban(),
+                }
+            })
+            .collect())
+    }
+
+    pub async fn set_room_name(&self, room_id_str: &str, name: String) -> Result<()> {
+        let room_id = <&RoomId>::try_from(room_id_str)
+            .with_context(|| format!("Invalid room ID: {room_id_str}"))?;
+        let room = self
+            .inner
+            .get_room(room_id)
+            .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
+        room.set_name(name).await.context("Failed to set room name")?;
+        Ok(())
+    }
+
+    pub async fn set_room_topic(&self, room_id_str: &str, topic: &str) -> Result<()> {
+        let room_id = <&RoomId>::try_from(room_id_str)
+            .with_context(|| format!("Invalid room ID: {room_id_str}"))?;
+        let room = self
+            .inner
+            .get_room(room_id)
+            .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
+        room.set_room_topic(topic).await.context("Failed to set room topic")?;
+        Ok(())
+    }
+
+    pub async fn kick_member(&self, room_id_str: &str, user_id_str: &str) -> Result<()> {
+        let room_id = <&RoomId>::try_from(room_id_str)
+            .with_context(|| format!("Invalid room ID: {room_id_str}"))?;
+        let user_id = <&UserId>::try_from(user_id_str)
+            .with_context(|| format!("Invalid user ID: {user_id_str}"))?;
+        let room = self
+            .inner
+            .get_room(room_id)
+            .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
+        room.kick_user(user_id, None).await.context("Failed to kick user")
+    }
+
+    pub async fn ban_member(&self, room_id_str: &str, user_id_str: &str) -> Result<()> {
+        let room_id = <&RoomId>::try_from(room_id_str)
+            .with_context(|| format!("Invalid room ID: {room_id_str}"))?;
+        let user_id = <&UserId>::try_from(user_id_str)
+            .with_context(|| format!("Invalid user ID: {user_id_str}"))?;
+        let room = self
+            .inner
+            .get_room(room_id)
+            .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
+        room.ban_user(user_id, None).await.context("Failed to ban user")
     }
 
     // -----------------------------------------------------------------------

@@ -6,7 +6,7 @@ use ratatui::Terminal;
 use ratatui::backend::Backend;
 
 use crate::matrix::MatrixClient;
-use crate::tools::{accounts, devices, home, ignore_list, leave_rooms, profile, rooms};
+use crate::tools::{accounts, devices, home, ignore_list, profile, rooms};
 use crate::ui;
 
 // ---------------------------------------------------------------------------
@@ -15,8 +15,7 @@ use crate::ui;
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("home", "Tool selection screen"),
-    ("leaverooms", "Leave selected rooms"),
-    ("rooms", "Browse joined rooms"),
+    ("rooms", "Browse and manage rooms"),
     ("accounts", "Manage accounts"),
     ("ignorelist", "Manage ignored users"),
     ("profile", "Edit display name and avatar"),
@@ -27,8 +26,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
 ];
 
 pub const HOME_TOOLS: &[(&str, &str)] = &[
-    ("Leave Rooms", "leaverooms"),
-    ("Room Browser", "rooms"),
+    ("Rooms", "rooms"),
     ("Accounts", "accounts"),
     ("Ignore List", "ignorelist"),
     ("Profile", "profile"),
@@ -89,7 +87,6 @@ pub enum Screen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTool {
     Home,
-    LeaveRooms,
     Rooms,
     Accounts,
     IgnoreList,
@@ -134,7 +131,6 @@ pub struct App {
     // Per-screen / tool state
     pub login: LoginState,
     pub home: home::HomeState,
-    pub leave_rooms: leave_rooms::LeaveRoomsState,
     pub accounts_tool: accounts::AccountsToolState,
     pub rooms_tool: rooms::RoomBrowserState,
     pub ignore_list: ignore_list::IgnoreListState,
@@ -157,7 +153,6 @@ impl App {
             show_help: false,
             login: LoginState::default(),
             home: home::HomeState::default(),
-            leave_rooms: leave_rooms::LeaveRoomsState::default(),
             accounts_tool: accounts::AccountsToolState::default(),
             rooms_tool: rooms::RoomBrowserState::default(),
             ignore_list: ignore_list::IgnoreListState::default(),
@@ -193,7 +188,8 @@ impl App {
         terminal.draw(|f| ui::draw(f, self))?;
 
         loop {
-            leave_rooms::poll_leave_results(self);
+            rooms::poll_leave_results(self);
+            rooms::poll_member_load(self);
             ignore_list::poll_load(self);
             profile::poll_load(self);
             devices::poll_load(self);
@@ -278,7 +274,6 @@ async fn handle_command_bar_key(app: &mut App, code: KeyCode) {
 pub async fn execute_command(app: &mut App, cmd: &str) {
     match cmd.trim() {
         "home" | "h" => app.active_tool = ActiveTool::Home,
-        "leaverooms" | "lr" => navigate_to_leave_rooms(app).await,
         "rooms" => navigate_to_rooms(app).await,
         "accounts" | "a" => navigate_to_accounts(app).await,
         "ignorelist" => navigate_to_ignore_list(app),
@@ -298,14 +293,6 @@ pub async fn execute_command(app: &mut App, cmd: &str) {
 }
 
 // Navigate helpers
-
-async fn navigate_to_leave_rooms(app: &mut App) {
-    app.active_tool = ActiveTool::LeaveRooms;
-    if app.leave_rooms.rooms.is_empty() && !app.leave_rooms.loading {
-        app.leave_rooms.loading = true;
-        leave_rooms::do_load_rooms(app).await;
-    }
-}
 
 async fn navigate_to_rooms(app: &mut App) {
     app.active_tool = ActiveTool::Rooms;
@@ -435,7 +422,6 @@ async fn handle_main_key(app: &mut App, code: KeyCode) {
 
     match app.active_tool {
         ActiveTool::Home => home::handle(app, code).await,
-        ActiveTool::LeaveRooms => leave_rooms::handle(app, code).await,
         ActiveTool::Rooms => rooms::handle(app, code).await,
         ActiveTool::Accounts => accounts::handle(app, code).await,
         ActiveTool::IgnoreList => ignore_list::handle(app, code).await,
