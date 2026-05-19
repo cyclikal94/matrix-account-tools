@@ -430,7 +430,7 @@ async fn handle_main_key(app: &mut App, code: KeyCode) {
     }
 }
 
-fn is_text_input_active(app: &App) -> bool {
+pub fn is_text_input_active(app: &App) -> bool {
     use crate::tools::devices::DeleteDialogState;
     app.rooms_tool.detail.editing.is_some()
         || app.rooms_tool.members.as_ref().map_or(false, |m| m.pl_edit.is_some())

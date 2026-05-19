@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use matrix_sdk::{
@@ -45,6 +45,27 @@ pub struct RoomInfo {
     pub member_count: u64,
     pub alias: Option<String>,
     pub topic: Option<String>,
+    pub unread: u64,
+    pub mentions: u64,
+    pub last_active: Option<String>,
+    pub encrypted: bool,
+    pub is_dm: bool,
+    pub avatar_letter: char,
+}
+
+fn format_duration_ago(ts_ms: u64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let secs = now.saturating_sub(ts_ms) / 1000;
+    match secs {
+        0..=59 => format!("{}s", secs),
+        60..=3599 => format!("{}m", secs / 60),
+        3600..=86399 => format!("{}h", secs / 3600),
+        86400..=604799 => format!("{}d", secs / 86400),
+        _ => format!("{}w", secs / 604800),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -291,12 +312,36 @@ impl MatrixClient {
                 .await
                 .map(|m| m.len() as u64)
                 .unwrap_or_else(|_| room.joined_members_count());
+
+            let counts = room.unread_notification_counts();
+            let unread = counts.notification_count;
+            let mentions = counts.highlight_count;
+
+            let last_active = room
+                .latest_event_timestamp()
+                .map(|ts| format_duration_ago(ts.0.into()));
+
+            let encrypted = room.encryption_state().is_encrypted();
+            let is_dm = room.is_dm();
+
+            let avatar_letter = display_name
+                .chars()
+                .next()
+                .unwrap_or('?')
+                .to_ascii_uppercase();
+
             infos.push(RoomInfo {
                 id: room.room_id().to_string(),
                 display_name,
                 member_count,
                 alias,
                 topic,
+                unread,
+                mentions,
+                last_active,
+                encrypted,
+                is_dm,
+                avatar_letter,
             });
         }
         infos.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));

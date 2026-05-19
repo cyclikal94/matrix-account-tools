@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use crate::tools::{ACCENT, FOCUSED, MUTED};
+use crate::tools::{ACCENT, ACCENT_DIM, MUTED};
 use crate::ui::centered_rect;
 
 pub fn draw_overlay(f: &mut Frame) {
@@ -22,7 +22,7 @@ pub fn draw_overlay(f: &mut Frame) {
 
     let row = |key: &'static str, desc: &'static str| -> Line<'static> {
         Line::from(vec![
-            Span::styled(format!("    {key:<18}"), Style::default().fg(FOCUSED)),
+            Span::styled(format!("    {key:<18}"), Style::default().fg(ACCENT_DIM)),
             Span::styled(desc, Style::default().fg(ratatui::style::Color::White)),
         ])
     };

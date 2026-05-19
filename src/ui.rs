@@ -6,8 +6,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::app::{App, CommandBarState, COMMANDS, Screen};
-use crate::tools::{self, ACCENT, BG, FOCUSED, HEADER_BG, MUTED};
+use crate::app::{self, App, CommandBarState, COMMANDS, Screen};
+use crate::tools::{self, ACCENT, BG, BG2, BG3, BORDER, DANGER, MUTED};
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -35,16 +35,16 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 // ---------------------------------------------------------------------------
-// Main layout: header + content + footer
+// Main layout: header + content + status bar
 // ---------------------------------------------------------------------------
 
 fn draw_main(f: &mut Frame, app: &App) {
     let area = f.area();
     f.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
-    let footer_height: u16 = if app.command_bar.is_some() { 3 } else { 2 };
+    let footer_height: u16 = if app.command_bar.is_some() { 3 } else { 1 };
     let chunks = Layout::vertical([
-        Constraint::Length(2),
+        Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(footer_height),
     ])
@@ -70,18 +70,18 @@ fn draw_main(f: &mut Frame, app: &App) {
 }
 
 // ---------------------------------------------------------------------------
-// Header
+// Header: ▌ matrix-account-tools  ·  :screen        ● sync  @user:hs
 // ---------------------------------------------------------------------------
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     use crate::app::ActiveTool::*;
-    let tool_name = match app.active_tool {
-        Home => tools::home::tool_name(),
-        Rooms => tools::rooms::tool_name(),
-        Accounts => tools::accounts::tool_name(),
-        IgnoreList => tools::ignore_list::tool_name(),
-        Profile => tools::profile::tool_name(),
-        Devices => tools::devices::tool_name(),
+    let screen_name = match app.active_tool {
+        Home => "home",
+        Rooms => ":rooms",
+        Accounts => ":accounts",
+        IgnoreList => ":ignorelist",
+        Profile => ":profile",
+        Devices => ":devices",
     };
 
     let account_str = match (&app.current_user_id, &app.matrix) {
@@ -95,54 +95,64 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             format!("@{local}:{hs_host}")
         }
         (Some(uid), None) => uid.clone(),
-        _ => "not logged in".to_owned(),
+        _ => String::new(),
     };
 
-    let spans = vec![
-        Span::styled(
-            " Matrix Account Tools ",
-            Style::default()
-                .fg(ACCENT)
-                .bg(HEADER_BG)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" │ ", Style::default().fg(MUTED).bg(HEADER_BG)),
-        Span::styled(
-            account_str,
-            Style::default().fg(Color::White).bg(HEADER_BG),
-        ),
-        Span::styled(" │ ", Style::default().fg(MUTED).bg(HEADER_BG)),
-        Span::styled(
-            format!("{tool_name} "),
-            Style::default()
-                .fg(FOCUSED)
-                .bg(HEADER_BG)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("│ : command ", Style::default().fg(MUTED).bg(HEADER_BG)),
-    ];
+    let sync_text = if app.matrix.is_some() { " ● sync " } else { " ● idle " };
 
+    // Split header into left (brand+screen) and right (sync+account).
+    let right_content = format!("{sync_text} {account_str} ");
+    let right_len = right_content.chars().count() as u16;
+    let cols = Layout::horizontal([Constraint::Min(1), Constraint::Length(right_len)])
+        .split(area);
+
+    // Left: brand + screen name
+    let left_line = Line::from(vec![
+        Span::styled("▌ ", Style::default().fg(ACCENT).bg(BG2)),
+        Span::styled(
+            "matrix-account-tools",
+            Style::default()
+                .fg(Color::Rgb(237, 239, 242))
+                .bg(BG2)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  ·  ", Style::default().fg(MUTED).bg(BG2)),
+        Span::styled(
+            screen_name,
+            Style::default().fg(ACCENT).bg(BG2),
+        ),
+    ]);
     f.render_widget(
-        Paragraph::new(Line::from(spans))
-            .style(Style::default().bg(HEADER_BG))
-            .block(
-                Block::default()
-                    .borders(Borders::BOTTOM)
-                    .border_style(Style::default().fg(MUTED)),
-            ),
-        area,
+        Paragraph::new(left_line).style(Style::default().bg(BG2)),
+        cols[0],
+    );
+
+    // Right: sync pill + account
+    let sync_color = if app.matrix.is_some() { ACCENT } else { MUTED };
+    let right_line = Line::from(vec![
+        Span::styled(sync_text, Style::default().fg(sync_color).bg(BG2)),
+        Span::styled(
+            format!(" {account_str} "),
+            Style::default().fg(MUTED).bg(BG2),
+        ),
+    ]);
+    f.render_widget(
+        Paragraph::new(right_line)
+            .alignment(Alignment::Right)
+            .style(Style::default().bg(BG2)),
+        cols[1],
     );
 }
 
 // ---------------------------------------------------------------------------
-// Footer
+// Footer: status bar or command palette
 // ---------------------------------------------------------------------------
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     if let Some(bar) = &app.command_bar {
         draw_command_bar(f, bar, area);
     } else {
-        draw_hint_bar(f, app, area);
+        draw_status_bar(f, app, area);
     }
 }
 
@@ -154,8 +164,8 @@ fn draw_command_bar(f: &mut Frame, bar: &CommandBarState, area: Rect) {
             let matched = completions.contains(cmd);
             let style = if matched {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(FOCUSED)
+                    .fg(Color::Rgb(14, 20, 22))
+                    .bg(ACCENT)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(MUTED)
@@ -172,26 +182,45 @@ fn draw_command_bar(f: &mut Frame, bar: &CommandBarState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::TOP)
-                    .border_style(Style::default().fg(MUTED)),
+                    .border_style(Style::default().fg(BORDER)),
             )
-            .style(Style::default().bg(BG)),
+            .style(Style::default().bg(BG2)),
         area,
     );
 
     let bottom = Rect::new(area.x, area.y + area.height.saturating_sub(1), area.width, 1);
     let input_line = Line::from(vec![
-        Span::styled(":", Style::default().fg(FOCUSED).add_modifier(Modifier::BOLD)),
-        Span::styled(bar.input.clone(), Style::default().fg(Color::White)),
-        Span::styled("█", Style::default().fg(FOCUSED)),
+        Span::styled(":", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(bar.input.clone(), Style::default().fg(Color::Rgb(237, 239, 242))),
+        Span::styled("█", Style::default().fg(ACCENT)),
     ]);
     f.render_widget(
-        Paragraph::new(input_line).style(Style::default().bg(BG)),
+        Paragraph::new(input_line).style(Style::default().bg(BG2)),
         bottom,
     );
 }
 
-fn draw_hint_bar(f: &mut Frame, app: &App, area: Rect) {
+fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     use crate::app::ActiveTool::*;
+
+    // Fill background.
+    f.render_widget(Block::default().style(Style::default().bg(BG3)), area);
+
+    let mode = current_mode(app);
+    let mode_text = format!(" {mode} ");
+    let mode_width = mode_text.len() as u16;
+
+    let screen_name = match app.active_tool {
+        Home => "home",
+        Rooms => ":rooms",
+        Accounts => ":accounts",
+        IgnoreList => ":ignorelist",
+        Profile => ":profile",
+        Devices => ":devices",
+    };
+    let screen_text = format!("  {screen_name}  ");
+    let screen_width = screen_text.len() as u16;
+
     let hints = match app.active_tool {
         Home => tools::home::hint_spans(),
         Rooms => tools::rooms::hint_spans(app),
@@ -201,16 +230,53 @@ fn draw_hint_bar(f: &mut Frame, app: &App, area: Rect) {
         Devices => tools::devices::hint_spans(app),
     };
 
+    let cols = Layout::horizontal([
+        Constraint::Length(mode_width),
+        Constraint::Length(screen_width),
+        Constraint::Min(1),
+    ])
+    .split(area);
+
+    // Mode badge: accent bg, dark text.
+    let mode_color = match mode {
+        "COMMAND" => Color::Rgb(77, 216, 168),
+        "INSERT" => Color::Rgb(224, 160, 62),
+        "LEAVE" => DANGER,
+        "FILTER" => Color::Rgb(77, 160, 255),
+        _ => ACCENT,
+    };
     f.render_widget(
-        Paragraph::new(Line::from(hints))
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_style(Style::default().fg(MUTED)),
-            ),
-        area,
+        Paragraph::new(mode_text)
+            .style(Style::default().fg(Color::Rgb(14, 20, 22)).bg(mode_color).add_modifier(Modifier::BOLD)),
+        cols[0],
     );
+
+    // Screen name.
+    f.render_widget(
+        Paragraph::new(screen_text).style(Style::default().fg(MUTED).bg(BG3)),
+        cols[1],
+    );
+
+    // Tool hints.
+    f.render_widget(
+        Paragraph::new(Line::from(hints)).style(Style::default().bg(BG3)),
+        cols[2],
+    );
+}
+
+fn current_mode(app: &App) -> &'static str {
+    use crate::app::ActiveTool;
+    if app.command_bar.is_some() {
+        return "COMMAND";
+    }
+    if app::is_text_input_active(app) {
+        return "INSERT";
+    }
+    match app.active_tool {
+        ActiveTool::Rooms if app.rooms_tool.leave_select => "LEAVE",
+        ActiveTool::Rooms if app.rooms_tool.filter.active => "FILTER",
+        _ => "NORMAL",
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -223,8 +289,8 @@ fn draw_login(f: &mut Frame, app: &App) {
     let area = f.area();
     f.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
-    let box_w = 60u16.min(area.width.saturating_sub(4));
-    let box_h = 22u16.min(area.height.saturating_sub(2));
+    let box_w = 62u16.min(area.width.saturating_sub(4));
+    let box_h = 14u16.min(area.height.saturating_sub(2));
     let outer = Rect::new(
         (area.width.saturating_sub(box_w)) / 2,
         (area.height.saturating_sub(box_h)) / 2,
@@ -235,12 +301,13 @@ fn draw_login(f: &mut Frame, app: &App) {
     f.render_widget(
         Block::default()
             .title(Span::styled(
-                " Matrix Account Tools ",
+                if app.login.can_go_back { " add account " } else { " matrix-account-tools " },
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ))
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(ACCENT)),
+            .border_style(Style::default().fg(BORDER))
+            .style(Style::default().bg(BG2)),
         outer,
     );
 
@@ -251,123 +318,77 @@ fn draw_login(f: &mut Frame, app: &App) {
         outer.height.saturating_sub(2),
     );
 
+    // Layout: 1 padding + 3 fields (each 1 row + 1 separator) - last sep + 1 padding + 1 status + 1 hints
     let chunks = Layout::vertical([
-        Constraint::Length(1), // heading
-        Constraint::Length(1), // gap
-        Constraint::Length(3), // homeserver
-        Constraint::Length(1), // gap
-        Constraint::Length(3), // username
-        Constraint::Length(1), // gap
-        Constraint::Length(3), // password
-        Constraint::Length(1), // gap
-        Constraint::Length(2), // error / loading
+        Constraint::Length(1), // top padding
+        Constraint::Length(1), // homeserver field
+        Constraint::Length(1), // separator
+        Constraint::Length(1), // username field
+        Constraint::Length(1), // separator
+        Constraint::Length(1), // password field
+        Constraint::Length(1), // bottom padding
+        Constraint::Length(1), // status (loading/error)
         Constraint::Min(0),    // hints
     ])
     .split(inner);
 
-    f.render_widget(
-        Paragraph::new(if app.login.can_go_back {
-            "Add a Matrix account"
-        } else {
-            "Log in to your Matrix account"
-        })
-        .style(Style::default().fg(MUTED))
-        .alignment(Alignment::Center),
-        chunks[0],
-    );
+    let sep_line = "─".repeat(inner.width as usize);
+    let sep_style = Style::default().fg(BORDER).bg(BG2);
 
-    let make_field = |label: &str, value: &str, focused: bool, mask: bool| {
-        let display: String = if mask { "•".repeat(value.len()) } else { value.to_owned() };
-        Paragraph::new(display)
-            .style(if focused {
-                Style::default().fg(FOCUSED)
-            } else {
-                Style::default().fg(Color::White)
-            })
-            .block(
-                Block::default()
-                    .title(Span::styled(
-                        format!(" {label} "),
-                        Style::default().fg(if focused { FOCUSED } else { ACCENT }),
-                    ))
-                    .borders(Borders::ALL)
-                    .border_style(if focused {
-                        Style::default().fg(FOCUSED)
-                    } else {
-                        Style::default().fg(ACCENT)
-                    }),
-            )
+    let render_field = |f: &mut Frame, label: &str, value: &str, focused: bool, mask: bool, area: Rect| {
+        let display: String = if mask { "•".repeat(value.chars().count()) } else { value.to_owned() };
+        let cursor = if focused { "█" } else { "" };
+        let label_color = if focused { ACCENT } else { MUTED };
+        let row_bg = if focused { BG3 } else { BG2 };
+        let bar = if focused {
+            Span::styled("▌", Style::default().fg(ACCENT).bg(BG3))
+        } else {
+            Span::styled(" ", Style::default().bg(BG2))
+        };
+        let line = Line::from(vec![
+            bar,
+            Span::styled(
+                format!(" {label:<12}"),
+                Style::default().fg(label_color).bg(row_bg).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(display, Style::default().fg(Color::Rgb(237, 239, 242)).bg(row_bg)),
+            Span::styled(cursor, Style::default().fg(ACCENT).bg(row_bg)),
+        ]);
+        f.render_widget(Paragraph::new(line).style(Style::default().bg(row_bg)), area);
     };
 
-    f.render_widget(
-        make_field(
-            "Homeserver URL",
-            &app.login.homeserver,
-            app.login.focused == LoginField::Homeserver,
-            false,
-        ),
-        chunks[2],
-    );
-    f.render_widget(
-        make_field(
-            "Username",
-            &app.login.username,
-            app.login.focused == LoginField::Username,
-            false,
-        ),
-        chunks[4],
-    );
-    f.render_widget(
-        make_field(
-            "Password",
-            &app.login.password,
-            app.login.focused == LoginField::Password,
-            true,
-        ),
-        chunks[6],
-    );
+    render_field(f, "HOMESERVER", &app.login.homeserver, app.login.focused == LoginField::Homeserver, false, chunks[1]);
+    f.render_widget(Paragraph::new(sep_line.clone()).style(sep_style), chunks[2]);
+    render_field(f, "USERNAME", &app.login.username, app.login.focused == LoginField::Username, false, chunks[3]);
+    f.render_widget(Paragraph::new(sep_line).style(sep_style), chunks[4]);
+    render_field(f, "PASSWORD", &app.login.password, app.login.focused == LoginField::Password, true, chunks[5]);
 
     if app.login.loading {
         f.render_widget(
             Paragraph::new("Logging in…")
                 .style(Style::default().fg(ACCENT).add_modifier(Modifier::ITALIC))
                 .alignment(Alignment::Center),
-            chunks[8],
+            chunks[7],
         );
     } else if let Some(err) = &app.login.error {
         f.render_widget(
             Paragraph::new(err.as_str())
-                .style(Style::default().fg(tools::ERROR))
+                .style(Style::default().fg(DANGER))
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
-            chunks[8],
+            chunks[7],
         );
     }
 
     let hint = if app.login.can_go_back {
-        "Tab/↑↓ switch fields  •  Enter confirm  •  Esc cancel"
+        "Tab next field  ·  Enter sign in  ·  Esc cancel"
     } else {
-        "Tab/↑↓ switch fields  •  Enter confirm  •  Ctrl+C quit"
+        "Tab next field  ·  Enter sign in  ·  Ctrl+C quit"
     };
     f.render_widget(
         Paragraph::new(hint)
             .style(Style::default().fg(MUTED))
             .alignment(Alignment::Center),
-        chunks[9],
+        chunks[8],
     );
-
-    let cursor_rect = match app.login.focused {
-        LoginField::Homeserver => chunks[2],
-        LoginField::Username => chunks[4],
-        LoginField::Password => chunks[6],
-    };
-    let cursor_len = match app.login.focused {
-        LoginField::Homeserver => app.login.homeserver.len(),
-        LoginField::Username => app.login.username.len(),
-        LoginField::Password => app.login.password.len(),
-    };
-    let cx = cursor_rect.x
-        + 1
-        + cursor_len.min((cursor_rect.width as usize).saturating_sub(3)) as u16;
-    f.set_cursor_position((cx, cursor_rect.y + 1));
 }

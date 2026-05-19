@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::app::{ActiveTool, App};
 use crate::matrix::{MemberInfo, RoomInfo};
-use crate::tools::{ACCENT, ERROR, FOCUSED, MUTED, SUCCESS, FilterState};
+use crate::tools::{ACCENT, ACCENT_DIM, BG3, BORDER, DANGER, FG2, MUTED, MUTED2, SUCCESS, FilterState};
 use crate::ui::centered_rect;
 
 // ---------------------------------------------------------------------------
@@ -99,11 +99,10 @@ pub struct RoomBrowserState {
     pub leaving_items: Vec<LeaveItem>,
     pub leave_rx: Option<mpsc::Receiver<(String, Result<(), String>)>>,
 
-    // Detail view (Some = detail open, None = list)
-    pub detail_idx: Option<usize>,
+    // Detail view state (always visible in right panel)
     pub detail: DetailState,
 
-    // Member view (Some = member list open, only valid when detail_idx is Some)
+    // Member view (Some = member list open)
     pub members: Option<MembersState>,
 }
 
@@ -119,7 +118,6 @@ impl Default for RoomBrowserState {
             checked: HashSet::new(),
             leaving_items: Vec::new(),
             leave_rx: None,
-            detail_idx: None,
             detail: DetailState::default(),
             members: None,
         }
@@ -132,6 +130,17 @@ impl RoomBrowserState {
             .iter()
             .filter(|r| self.filter.matches(&r.display_name))
             .collect()
+    }
+
+    pub fn selected_room_id(&self) -> Option<String> {
+        self.filtered_rooms()
+            .get(self.selected)
+            .map(|r| r.id.clone())
+    }
+
+    pub fn selected_room_idx(&self) -> Option<usize> {
+        let id = self.selected_room_id()?;
+        self.rooms.iter().position(|r| r.id == id)
     }
 }
 
@@ -240,9 +249,9 @@ pub async fn handle(app: &mut App, code: KeyCode) {
         return;
     }
 
-    // Detail view.
-    if app.rooms_tool.detail_idx.is_some() {
-        handle_detail(app, code).await;
+    // Detail edit/confirm-leave takes priority when active.
+    if app.rooms_tool.detail.editing.is_some() || app.rooms_tool.detail.confirm_leave {
+        handle_detail_edit(app, code).await;
         return;
     }
 
@@ -271,7 +280,7 @@ pub async fn handle(app: &mut App, code: KeyCode) {
         return;
     }
 
-    // Normal list.
+    // Normal list (with detail panel keys).
     handle_list(app, code).await;
 }
 
@@ -287,7 +296,6 @@ fn handle_filter_input(app: &mut App, code: KeyCode) {
         }
         KeyCode::Down | KeyCode::Char('j') => nav_down(app),
         KeyCode::Up | KeyCode::Char('k') => nav_up(app),
-        KeyCode::Enter => open_detail(app),
         _ => {}
     }
 }
@@ -302,7 +310,43 @@ async fn handle_list(app: &mut App, code: KeyCode) {
             app.rooms_tool.filter.input.clear();
             app.rooms_tool.selected = 0;
         }
-        KeyCode::Enter => open_detail(app),
+        KeyCode::Tab => {
+            app.rooms_tool.detail.focused = match app.rooms_tool.detail.focused {
+                DetailField::Name => DetailField::Topic,
+                DetailField::Topic => DetailField::Alias,
+                DetailField::Alias => DetailField::Name,
+            };
+        }
+        KeyCode::BackTab => {
+            app.rooms_tool.detail.focused = match app.rooms_tool.detail.focused {
+                DetailField::Name => DetailField::Alias,
+                DetailField::Topic => DetailField::Name,
+                DetailField::Alias => DetailField::Topic,
+            };
+        }
+        KeyCode::Char('e') | KeyCode::Enter => {
+            if let Some(idx) = app.rooms_tool.selected_room_idx() {
+                if let Some(room) = app.rooms_tool.rooms.get(idx) {
+                    let current = match app.rooms_tool.detail.focused {
+                        DetailField::Name => room.display_name.clone(),
+                        DetailField::Topic => room.topic.clone().unwrap_or_default(),
+                        DetailField::Alias => room.alias.clone().unwrap_or_default(),
+                    };
+                    app.rooms_tool.detail.editing = Some(current);
+                    app.rooms_tool.detail.error = None;
+                    app.rooms_tool.detail.success = None;
+                }
+            }
+        }
+        KeyCode::Char('m') | KeyCode::Char('M') => {
+            app.rooms_tool.members = Some(MembersState::default());
+            start_member_load(app);
+        }
+        KeyCode::Char('x') | KeyCode::Char('X') => {
+            if !app.rooms_tool.rooms.is_empty() {
+                app.rooms_tool.detail.confirm_leave = true;
+            }
+        }
         KeyCode::Char('d') | KeyCode::Char('D') => {
             app.rooms_tool.leave_select = true;
             app.rooms_tool.checked.clear();
@@ -323,7 +367,7 @@ async fn handle_leave_select(app: &mut App, code: KeyCode) {
         }
         KeyCode::Char('j') | KeyCode::Down => nav_down(app),
         KeyCode::Char('k') | KeyCode::Up => nav_up(app),
-        KeyCode::Char(' ') | KeyCode::Char('x') => {
+        KeyCode::Char(' ') => {
             let filtered = app.rooms_tool.filtered_rooms();
             if let Some(room) = filtered.get(app.rooms_tool.selected) {
                 let id = room.id.clone();
@@ -339,7 +383,8 @@ async fn handle_leave_select(app: &mut App, code: KeyCode) {
     }
 }
 
-async fn handle_detail(app: &mut App, code: KeyCode) {
+/// Handles input when detail.editing is Some or detail.confirm_leave is true.
+async fn handle_detail_edit(app: &mut App, code: KeyCode) {
     if app.rooms_tool.detail.confirm_leave {
         match code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
@@ -370,49 +415,6 @@ async fn handle_detail(app: &mut App, code: KeyCode) {
             KeyCode::Enter => do_save_field(app).await,
             _ => {}
         }
-        return;
-    }
-
-    match code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            app.rooms_tool.detail_idx = None;
-            app.rooms_tool.detail = DetailState::default();
-        }
-        KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down => {
-            app.rooms_tool.detail.focused = match app.rooms_tool.detail.focused {
-                DetailField::Name => DetailField::Topic,
-                DetailField::Topic => DetailField::Alias,
-                DetailField::Alias => DetailField::Name,
-            };
-        }
-        KeyCode::BackTab | KeyCode::Char('k') | KeyCode::Up => {
-            app.rooms_tool.detail.focused = match app.rooms_tool.detail.focused {
-                DetailField::Name => DetailField::Alias,
-                DetailField::Topic => DetailField::Name,
-                DetailField::Alias => DetailField::Topic,
-            };
-        }
-        KeyCode::Char('e') | KeyCode::Enter => {
-            let idx = app.rooms_tool.detail_idx.unwrap();
-            if let Some(room) = app.rooms_tool.rooms.get(idx) {
-                let current = match app.rooms_tool.detail.focused {
-                    DetailField::Name => room.display_name.clone(),
-                    DetailField::Topic => room.topic.clone().unwrap_or_default(),
-                    DetailField::Alias => room.alias.clone().unwrap_or_default(),
-                };
-                app.rooms_tool.detail.editing = Some(current);
-                app.rooms_tool.detail.error = None;
-                app.rooms_tool.detail.success = None;
-            }
-        }
-        KeyCode::Char('d') | KeyCode::Char('D') => {
-            app.rooms_tool.detail.confirm_leave = true;
-        }
-        KeyCode::Char('m') | KeyCode::Char('M') => {
-            app.rooms_tool.members = Some(MembersState::default());
-            start_member_load(app);
-        }
-        _ => {}
     }
 }
 
@@ -548,17 +550,6 @@ fn nav_up(app: &mut App) {
     }
 }
 
-fn open_detail(app: &mut App) {
-    let filtered = app.rooms_tool.filtered_rooms();
-    if let Some(room) = filtered.get(app.rooms_tool.selected) {
-        let id = room.id.clone();
-        if let Some(idx) = app.rooms_tool.rooms.iter().position(|r| r.id == id) {
-            app.rooms_tool.detail_idx = Some(idx);
-            app.rooms_tool.detail = DetailState::default();
-        }
-    }
-}
-
 fn start_leaving(app: &mut App) {
     let to_leave: Vec<(String, String)> = app
         .rooms_tool
@@ -600,15 +591,17 @@ fn start_leaving(app: &mut App) {
 
 async fn do_leave_single(app: &mut App) {
     app.rooms_tool.detail.confirm_leave = false;
-    let Some(idx) = app.rooms_tool.detail_idx else { return; };
-    let Some(room) = app.rooms_tool.rooms.get(idx) else { return; };
-    let room_id = room.id.clone();
+    let Some(room_id) = app.rooms_tool.selected_room_id() else { return; };
 
     if let Some(client) = &app.matrix {
         match client.leave_room(&room_id).await {
             Ok(()) => {
                 app.rooms_tool.rooms.retain(|r| r.id != room_id);
-                app.rooms_tool.detail_idx = None;
+                // Clamp selected
+                let filtered_len = app.rooms_tool.filtered_rooms().len();
+                if app.rooms_tool.selected >= filtered_len && filtered_len > 0 {
+                    app.rooms_tool.selected = filtered_len - 1;
+                }
                 app.rooms_tool.detail = DetailState::default();
                 app.rooms_tool.members = None;
             }
@@ -620,7 +613,7 @@ async fn do_leave_single(app: &mut App) {
 }
 
 async fn do_save_field(app: &mut App) {
-    let Some(idx) = app.rooms_tool.detail_idx else { return; };
+    let Some(idx) = app.rooms_tool.selected_room_idx() else { return; };
     let Some(room) = app.rooms_tool.rooms.get(idx) else { return; };
     let room_id = room.id.clone();
     let val = app.rooms_tool.detail.editing.take().unwrap_or_default();
@@ -660,9 +653,7 @@ async fn do_save_field(app: &mut App) {
 }
 
 fn start_member_load(app: &mut App) {
-    let Some(idx) = app.rooms_tool.detail_idx else { return; };
-    let Some(room) = app.rooms_tool.rooms.get(idx) else { return; };
-    let room_id = room.id.clone();
+    let Some(room_id) = app.rooms_tool.selected_room_id() else { return; };
     let Some(client) = app.matrix.clone() else { return; };
     let ms = match &mut app.rooms_tool.members {
         Some(ms) => ms,
@@ -679,9 +670,7 @@ fn start_member_load(app: &mut App) {
 }
 
 async fn do_set_power_level(app: &mut App, user_id: String, level: i64) {
-    let Some(idx) = app.rooms_tool.detail_idx else { return; };
-    let Some(room) = app.rooms_tool.rooms.get(idx) else { return; };
-    let room_id = room.id.clone();
+    let Some(room_id) = app.rooms_tool.selected_room_id() else { return; };
     let Some(client) = app.matrix.clone() else { return; };
 
     let (tx, rx) = oneshot::channel();
@@ -696,9 +685,7 @@ async fn do_set_power_level(app: &mut App, user_id: String, level: i64) {
 }
 
 async fn do_mod_action(app: &mut App, action: ModAction, user_id: String) {
-    let Some(idx) = app.rooms_tool.detail_idx else { return; };
-    let Some(room) = app.rooms_tool.rooms.get(idx) else { return; };
-    let room_id = room.id.clone();
+    let Some(room_id) = app.rooms_tool.selected_room_id() else { return; };
     let Some(client) = app.matrix.clone() else { return; };
 
     let (tx, rx) = oneshot::channel();
@@ -736,29 +723,6 @@ pub async fn do_load_rooms(app: &mut App) {
 // ---------------------------------------------------------------------------
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
-    // Member view takes precedence.
-    if app.rooms_tool.members.is_some() {
-        draw_members(f, app, area);
-        return;
-    }
-
-    // Detail view.
-    if let Some(idx) = app.rooms_tool.detail_idx {
-        draw_detail(f, app, area, idx);
-        return;
-    }
-
-    // Leaving progress overlay.
-    if !app.rooms_tool.leaving_items.is_empty() {
-        draw_leaving(f, app, area);
-        return;
-    }
-
-    // List.
-    draw_list(f, app, area);
-}
-
-fn draw_list(f: &mut Frame, app: &App, area: Rect) {
     if app.rooms_tool.loading {
         f.render_widget(
             Paragraph::new("Syncing rooms…")
@@ -769,6 +733,58 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    let cols = Layout::horizontal([
+        Constraint::Percentage(50),
+        Constraint::Min(20),
+    ])
+    .split(area);
+
+    draw_list_panel(f, app, cols[0]);
+    draw_right_panel(f, app, cols[1]);
+}
+
+fn draw_right_panel(f: &mut Frame, app: &App, area: Rect) {
+    if app.rooms_tool.members.is_some() {
+        draw_members(f, app, area);
+    } else if !app.rooms_tool.leaving_items.is_empty() {
+        draw_leaving(f, app, area);
+    } else if app.rooms_tool.leave_select {
+        draw_leave_summary(f, app, area);
+    } else {
+        let filtered = app.rooms_tool.filtered_rooms();
+        if let Some(room) = filtered.get(app.rooms_tool.selected) {
+            draw_detail(f, app, area, room.id.clone());
+        } else {
+            f.render_widget(
+                Paragraph::new("No room selected")
+                    .style(Style::default().fg(MUTED))
+                    .alignment(Alignment::Center),
+                area,
+            );
+        }
+    }
+}
+
+fn fmt_members(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.0}M", n as f64 / 1_000_000.0)
+    } else if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+fn fmt_last_active(s: &str) -> String {
+    // Truncate or pad to 4 chars for right-aligned column
+    if s.len() > 5 {
+        s[..5].to_owned()
+    } else {
+        s.to_owned()
+    }
+}
+
+fn draw_list_panel(f: &mut Frame, app: &App, area: Rect) {
     let show_filter = app.rooms_tool.filter.active || !app.rooms_tool.filter.input.is_empty();
     let chunks = if show_filter {
         Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area)
@@ -797,30 +813,112 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
 
     let filtered = app.rooms_tool.filtered_rooms();
     let leave_select = app.rooms_tool.leave_select;
+    let sel_idx = if filtered.is_empty() {
+        None
+    } else {
+        Some(app.rooms_tool.selected.min(filtered.len() - 1))
+    };
 
     let items: Vec<ListItem> = filtered
         .iter()
-        .map(|r| {
-            let checked = if leave_select {
+        .enumerate()
+        .map(|(i, r)| {
+            let is_selected = sel_idx == Some(i);
+
+            // Selection indicator
+            let indicator = if is_selected {
+                Span::styled("▌ ", Style::default().fg(ACCENT))
+            } else {
+                Span::styled("  ", Style::default().fg(MUTED))
+            };
+
+            // Avatar badge [X]
+            let avatar_str = format!("[{}]", r.avatar_letter);
+            let avatar_span = if is_selected {
+                Span::styled(avatar_str, Style::default().fg(ACCENT).bg(BG3))
+            } else {
+                Span::styled(avatar_str, Style::default().fg(MUTED2))
+            };
+
+            // Spacing after avatar
+            let space = Span::raw(" ");
+
+            // Room name — truncated, bold if selected
+            let name_style = if is_selected {
+                Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(FG2)
+            };
+            // Truncate name to keep row tidy (max 28 chars)
+            let name_str = if r.display_name.len() > 28 {
+                format!("{}…", &r.display_name[..27])
+            } else {
+                r.display_name.clone()
+            };
+            let name_span = Span::styled(name_str, name_style);
+
+            // Encryption badge
+            let enc_span = if r.encrypted {
+                Span::styled(" ● ", Style::default().fg(ACCENT))
+            } else {
+                Span::raw("   ")
+            };
+
+            // DM badge
+            let dm_span = if r.is_dm {
+                Span::styled("DM ", Style::default().fg(MUTED))
+            } else {
+                Span::raw("   ")
+            };
+
+            // Member count (6ch right-aligned)
+            let mc_str = fmt_members(r.member_count);
+            let mc_span = Span::styled(
+                format!("{:>5}", mc_str),
+                Style::default().fg(MUTED),
+            );
+
+            // Unread count (4ch)
+            let unread_span = if r.unread > 0 {
+                Span::styled(
+                    format!(" {:>3}", r.unread.min(9999)),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled("   ·", Style::default().fg(MUTED))
+            };
+
+            // Last active (5ch)
+            let last_str = r.last_active.as_deref()
+                .map(fmt_last_active)
+                .unwrap_or_else(|| "     ".to_owned());
+            let last_span = Span::styled(
+                format!(" {:>4}", last_str),
+                Style::default().fg(MUTED),
+            );
+
+            // Checkbox for leave-select
+            let check_span = if leave_select {
                 if app.rooms_tool.checked.contains(&r.id) {
-                    Span::styled("[✓] ", Style::default().fg(ERROR).add_modifier(Modifier::BOLD))
+                    Span::styled("[✓]", Style::default().fg(DANGER).add_modifier(Modifier::BOLD))
                 } else {
-                    Span::styled("[ ] ", Style::default().fg(MUTED))
+                    Span::styled("[ ]", Style::default().fg(MUTED))
                 }
             } else {
                 Span::raw("")
             };
-            let member_text = if r.member_count > 0 {
-                format!("  {} members", r.member_count)
-            } else {
-                String::new()
-            };
-            let alias_text = r.alias.as_deref().map(|a| format!("  {a}")).unwrap_or_default();
+
             ListItem::new(Line::from(vec![
-                checked,
-                Span::styled(r.display_name.clone(), Style::default().fg(ratatui::style::Color::White)),
-                Span::styled(member_text, Style::default().fg(MUTED)),
-                Span::styled(alias_text, Style::default().fg(MUTED)),
+                indicator,
+                avatar_span,
+                space,
+                name_span,
+                enc_span,
+                dm_span,
+                mc_span,
+                unread_span,
+                last_span,
+                check_span,
             ]))
         })
         .collect();
@@ -835,36 +933,28 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
         format!(" {} room(s) ", app.rooms_tool.rooms.len())
     };
 
-    let border_color = if leave_select { ERROR } else { ACCENT };
+    let border_color = if leave_select { DANGER } else { BORDER };
+    let title_color = if leave_select { DANGER } else { ACCENT };
 
     let list = List::new(items)
         .block(
             Block::default()
-                .title(Span::styled(title, Style::default().fg(border_color)))
+                .title(Span::styled(title, Style::default().fg(title_color)))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(border_color)),
         )
-        .highlight_style(
-            Style::default()
-                .bg(ratatui::style::Color::Rgb(40, 60, 80))
-                .fg(FOCUSED)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▶ ");
+        .highlight_style(Style::default().bg(BG3))
+        .highlight_symbol("");
 
     let mut state = ListState::default();
-    state.select(if filtered.is_empty() {
-        None
-    } else {
-        Some(app.rooms_tool.selected.min(filtered.len() - 1))
-    });
+    state.select(sel_idx);
 
     if let Some(err) = &app.rooms_tool.error {
         let ec = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(list_area);
         f.render_stateful_widget(list, ec[0], &mut state);
         f.render_widget(
             Paragraph::new(err.as_str())
-                .style(Style::default().fg(ERROR))
+                .style(Style::default().fg(DANGER))
                 .alignment(Alignment::Center),
             ec[1],
         );
@@ -877,9 +967,9 @@ fn draw_filter_row(f: &mut Frame, app: &App, area: Rect) {
     let filter = &app.rooms_tool.filter;
     let line = if filter.active {
         Line::from(vec![
-            Span::styled(" Filter: ", Style::default().fg(FOCUSED)),
+            Span::styled(" Filter: ", Style::default().fg(ACCENT_DIM)),
             Span::styled(filter.input.clone(), Style::default().fg(ratatui::style::Color::White)),
-            Span::styled("█", Style::default().fg(FOCUSED)),
+            Span::styled("█", Style::default().fg(ACCENT_DIM)),
             Span::styled("  Esc to clear", Style::default().fg(MUTED)),
         ])
     } else {
@@ -907,8 +997,8 @@ fn draw_leaving(f: &mut Frame, app: &App, area: Rect) {
                     MUTED,
                 ),
                 LeaveStatus::Failed(_) => (
-                    Span::styled("  ✗ ", Style::default().fg(ERROR).add_modifier(Modifier::BOLD)),
-                    ERROR,
+                    Span::styled("  ✗ ", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
+                    DANGER,
                 ),
             };
             let mut spans = vec![
@@ -918,7 +1008,7 @@ fn draw_leaving(f: &mut Frame, app: &App, area: Rect) {
             if let LeaveStatus::Failed(ref e) = item.status {
                 spans.push(Span::styled(
                     format!("  {e}"),
-                    Style::default().fg(ERROR),
+                    Style::default().fg(DANGER),
                 ));
             }
             ListItem::new(Line::from(spans))
@@ -948,8 +1038,51 @@ fn draw_leaving(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
-    let Some(room) = app.rooms_tool.rooms.get(idx) else { return; };
+fn draw_leave_summary(f: &mut Frame, app: &App, area: Rect) {
+    let checked_rooms: Vec<&RoomInfo> = app
+        .rooms_tool
+        .filtered_rooms()
+        .into_iter()
+        .filter(|r| app.rooms_tool.checked.contains(&r.id))
+        .collect();
+
+    let count = checked_rooms.len();
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(if count == 0 {
+            vec![Span::styled("  nothing selected", Style::default().fg(MUTED))]
+        } else {
+            vec![
+                Span::styled(format!("  {} ", count), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+                Span::styled("room(s) selected", Style::default().fg(FG2)),
+            ]
+        }),
+        Line::from(""),
+    ];
+    for room in &checked_rooms {
+        lines.push(Line::from(vec![
+            Span::styled("  ☑ ", Style::default().fg(ACCENT)),
+            Span::styled(room.display_name.clone(), Style::default().fg(FG2)),
+        ]));
+    }
+
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(Span::styled(" leave select ", Style::default().fg(DANGER)))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(BORDER)),
+            )
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_detail(f: &mut Frame, app: &App, area: Rect, room_id: String) {
+    let Some(room) = app.rooms_tool.rooms.iter().find(|r| r.id == room_id) else {
+        return;
+    };
     let detail = &app.rooms_tool.detail;
 
     let field_text = |field: DetailField, fallback: &str| -> String {
@@ -965,7 +1098,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
     let alias_text = field_text(DetailField::Alias, room.alias.as_deref().unwrap_or(""));
 
     let make_field = |label: &str, value: &str, focused: bool, editing: bool| -> Paragraph<'static> {
-        let border_color = if editing { FOCUSED } else if focused { ACCENT } else { MUTED };
+        let border_color = if editing { ACCENT_DIM } else if focused { ACCENT } else { BORDER };
         let text_color = if focused || editing {
             ratatui::style::Color::White
         } else {
@@ -1001,6 +1134,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
         Constraint::Length(1),  // gap
         Constraint::Length(2),  // info (room ID + members)
         Constraint::Length(1),  // status
+        Constraint::Min(0),     // remainder
     ])
     .split(area);
 
@@ -1040,7 +1174,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
             .alignment(Alignment::Center)
     } else if let Some(err) = &detail.error {
         Paragraph::new(err.as_str())
-            .style(Style::default().fg(ERROR))
+            .style(Style::default().fg(DANGER))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true })
     } else if let Some(ok) = &detail.success {
@@ -1066,22 +1200,22 @@ fn draw_confirm_leave(f: &mut Frame, room_name: &str) {
             Line::from(""),
             Line::from(vec![
                 Span::raw("  Leave "),
-                Span::styled(room_name.to_owned(), Style::default().fg(FOCUSED).add_modifier(Modifier::BOLD)),
+                Span::styled(room_name.to_owned(), Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD)),
                 Span::raw("?"),
             ]),
             Line::from(""),
             Line::from(vec![
                 Span::styled("  y/Enter", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
                 Span::raw("  confirm    "),
-                Span::styled("any other key", Style::default().fg(ERROR).add_modifier(Modifier::BOLD)),
+                Span::styled("any other key", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
                 Span::raw("  cancel"),
             ]),
         ])
         .block(
             Block::default()
-                .title(Span::styled(" Confirm ", Style::default().fg(ERROR).add_modifier(Modifier::BOLD)))
+                .title(Span::styled(" Confirm ", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ERROR))
+                .border_style(Style::default().fg(DANGER))
                 .style(Style::default().bg(ratatui::style::Color::Rgb(25, 15, 15))),
         )
         .wrap(Wrap { trim: false }),
@@ -1160,9 +1294,8 @@ fn draw_members(f: &mut Frame, app: &App, area: Rect) {
             })
             .collect();
 
-        let room_name = app
-            .rooms_tool
-            .detail_idx
+        let room_name = app.rooms_tool
+            .selected_room_idx()
             .and_then(|i| app.rooms_tool.rooms.get(i))
             .map(|r| r.display_name.as_str())
             .unwrap_or("Room");
@@ -1180,7 +1313,7 @@ fn draw_members(f: &mut Frame, app: &App, area: Rect) {
             .highlight_style(
                 Style::default()
                     .bg(ratatui::style::Color::Rgb(40, 60, 80))
-                    .fg(FOCUSED)
+                    .fg(ACCENT_DIM)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▶ ");
@@ -1198,9 +1331,9 @@ fn draw_members(f: &mut Frame, app: &App, area: Rect) {
             let input = ms.pl_edit.as_deref().unwrap_or("");
             f.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(" Set power level: ", Style::default().fg(FOCUSED)),
+                    Span::styled(" Set power level: ", Style::default().fg(ACCENT_DIM)),
                     Span::styled(input.to_owned(), Style::default().fg(ratatui::style::Color::White)),
-                    Span::styled("█", Style::default().fg(FOCUSED)),
+                    Span::styled("█", Style::default().fg(ACCENT_DIM)),
                 ])),
                 row,
             );
@@ -1210,7 +1343,7 @@ fn draw_members(f: &mut Frame, app: &App, area: Rect) {
             if let Some(err) = &ms.error {
                 f.render_widget(
                     Paragraph::new(err.as_str())
-                        .style(Style::default().fg(ERROR))
+                        .style(Style::default().fg(DANGER))
                         .alignment(Alignment::Center),
                     Rect::new(sub.x, sub.y, sub.width, 1),
                 );
@@ -1236,22 +1369,22 @@ fn draw_mod_confirm(f: &mut Frame, action: ModAction, user_id: &str) {
             Line::from(""),
             Line::from(vec![
                 Span::raw(format!("  {verb} ")),
-                Span::styled(user_id.to_owned(), Style::default().fg(FOCUSED).add_modifier(Modifier::BOLD)),
+                Span::styled(user_id.to_owned(), Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD)),
                 Span::raw("?"),
             ]),
             Line::from(""),
             Line::from(vec![
                 Span::styled("  y/Enter", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
                 Span::raw("  confirm    "),
-                Span::styled("any other key", Style::default().fg(ERROR).add_modifier(Modifier::BOLD)),
+                Span::styled("any other key", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
                 Span::raw("  cancel"),
             ]),
         ])
         .block(
             Block::default()
-                .title(Span::styled(format!(" {verb} Member "), Style::default().fg(ERROR).add_modifier(Modifier::BOLD)))
+                .title(Span::styled(format!(" {verb} Member "), Style::default().fg(DANGER).add_modifier(Modifier::BOLD)))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ERROR))
+                .border_style(Style::default().fg(DANGER))
                 .style(Style::default().bg(ratatui::style::Color::Rgb(25, 15, 15))),
         )
         .wrap(Wrap { trim: false }),
@@ -1278,9 +1411,9 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
             Span::raw(" navigate  "),
             Span::styled("p", Style::default().fg(ACCENT)),
             Span::raw(" power level  "),
-            Span::styled("K", Style::default().fg(ERROR)),
+            Span::styled("K", Style::default().fg(DANGER)),
             Span::raw(" kick  "),
-            Span::styled("b", Style::default().fg(ERROR)),
+            Span::styled("b", Style::default().fg(DANGER)),
             Span::raw(" ban  "),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::raw(" refresh  "),
@@ -1288,37 +1421,21 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
             Span::raw(" back"),
         ];
     }
-    if app.rooms_tool.detail_idx.is_some() {
-        let detail = &app.rooms_tool.detail;
-        return if detail.editing.is_some() {
-            vec![
-                Span::styled("Enter", Style::default().fg(SUCCESS)),
-                Span::raw(" save  "),
-                Span::styled("Esc", Style::default().fg(ACCENT)),
-                Span::raw(" discard"),
-            ]
-        } else {
-            vec![
-                Span::styled("Tab/j/k", Style::default().fg(ACCENT)),
-                Span::raw(" field  "),
-                Span::styled("e/Enter", Style::default().fg(ACCENT)),
-                Span::raw(" edit  "),
-                Span::styled("m", Style::default().fg(ACCENT)),
-                Span::raw(" members  "),
-                Span::styled("d", Style::default().fg(ERROR)),
-                Span::raw(" leave  "),
-                Span::styled("Esc/q", Style::default().fg(ACCENT)),
-                Span::raw(" back"),
-            ]
-        };
+    if app.rooms_tool.detail.editing.is_some() {
+        return vec![
+            Span::styled("Enter", Style::default().fg(SUCCESS)),
+            Span::raw(" save  "),
+            Span::styled("Esc", Style::default().fg(ACCENT)),
+            Span::raw(" discard"),
+        ];
     }
     if app.rooms_tool.leave_select {
         return vec![
             Span::styled("j/k", Style::default().fg(ACCENT)),
             Span::raw(" navigate  "),
-            Span::styled("Space/x", Style::default().fg(ACCENT)),
+            Span::styled("Space", Style::default().fg(ACCENT)),
             Span::raw(" select  "),
-            Span::styled("Enter", Style::default().fg(ERROR)),
+            Span::styled("Enter", Style::default().fg(DANGER)),
             Span::raw(" leave selected  "),
             Span::styled("Esc", Style::default().fg(ACCENT)),
             Span::raw(" cancel"),
@@ -1327,18 +1444,16 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
     vec![
         Span::styled("j/k", Style::default().fg(ACCENT)),
         Span::raw(" navigate  "),
-        Span::styled("Enter", Style::default().fg(ACCENT)),
-        Span::raw(" detail  "),
-        Span::styled("d", Style::default().fg(ERROR)),
-        Span::raw(" leave rooms  "),
+        Span::styled("Tab/e", Style::default().fg(ACCENT)),
+        Span::raw(" edit field  "),
+        Span::styled("m", Style::default().fg(ACCENT)),
+        Span::raw(" members  "),
+        Span::styled("x", Style::default().fg(DANGER)),
+        Span::raw(" leave  "),
+        Span::styled("d", Style::default().fg(DANGER)),
+        Span::raw(" multi-leave  "),
         Span::styled("/", Style::default().fg(ACCENT)),
-        Span::raw(" filter  "),
-        Span::styled("r", Style::default().fg(ACCENT)),
-        Span::raw(" refresh  "),
-        Span::styled(":", Style::default().fg(ACCENT)),
-        Span::raw(" command  "),
-        Span::styled("Esc/q", Style::default().fg(ACCENT)),
-        Span::raw(" home"),
+        Span::raw(" filter"),
     ]
 }
 

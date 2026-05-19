@@ -9,7 +9,7 @@ use ratatui::{
 use tokio::sync::oneshot;
 
 use crate::app::{ActiveTool, App};
-use crate::tools::{ACCENT, ERROR, FOCUSED, MUTED, SUCCESS};
+use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS};
 
 // ---------------------------------------------------------------------------
 // State
@@ -264,7 +264,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let make_field =
         |label: &str, value: &str, focused: bool, editing: bool| -> Paragraph<'static> {
             let border_color = if editing {
-                FOCUSED
+                ACCENT_DIM
             } else if focused {
                 ACCENT
             } else {
@@ -309,7 +309,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             .alignment(Alignment::Center)
     } else if let Some(err) = &app.profile.error {
         Paragraph::new(err.as_str())
-            .style(Style::default().fg(ERROR))
+            .style(Style::default().fg(DANGER))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true })
     } else if let Some(ok) = &app.profile.success {

@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 
 use crate::app::{ActiveTool, App};
 use crate::matrix::DeviceInfo;
-use crate::tools::{ACCENT, ERROR, FOCUSED, MUTED, SUCCESS};
+use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS};
 use crate::ui::centered_rect;
 
 // ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         .highlight_style(
             Style::default()
                 .bg(ratatui::style::Color::Rgb(40, 60, 80))
-                .fg(FOCUSED)
+                .fg(ACCENT_DIM)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -265,7 +265,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         f.render_stateful_widget(list, chunks[0], &mut state);
         f.render_widget(
             Paragraph::new(err.as_str())
-                .style(Style::default().fg(ERROR))
+                .style(Style::default().fg(DANGER))
                 .alignment(Alignment::Center),
             chunks[1],
         );
@@ -301,7 +301,7 @@ fn draw_delete_dialog(f: &mut Frame, app: &App) {
                 Span::raw("  Sign out device: "),
                 Span::styled(
                     dev_name,
-                    Style::default().fg(FOCUSED).add_modifier(Modifier::BOLD),
+                    Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(""),
@@ -313,7 +313,7 @@ fn draw_delete_dialog(f: &mut Frame, app: &App) {
                 Span::raw("  continue    "),
                 Span::styled(
                     "any other key",
-                    Style::default().fg(ERROR),
+                    Style::default().fg(DANGER),
                 ),
                 Span::raw("  cancel"),
             ]),
@@ -326,12 +326,12 @@ fn draw_delete_dialog(f: &mut Frame, app: &App) {
             )]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  Password: ", Style::default().fg(FOCUSED)),
+                Span::styled("  Password: ", Style::default().fg(ACCENT_DIM)),
                 Span::styled(
                     "•".repeat(pwd.len()),
                     Style::default().fg(ratatui::style::Color::White),
                 ),
-                Span::styled("█", Style::default().fg(FOCUSED)),
+                Span::styled("█", Style::default().fg(ACCENT_DIM)),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -352,10 +352,10 @@ fn draw_delete_dialog(f: &mut Frame, app: &App) {
                 Block::default()
                     .title(Span::styled(
                         " Sign Out Device ",
-                        Style::default().fg(ERROR).add_modifier(Modifier::BOLD),
+                        Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
                     ))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ERROR))
+                    .border_style(Style::default().fg(DANGER))
                     .style(Style::default().bg(ratatui::style::Color::Rgb(25, 15, 15))),
             )
             .wrap(Wrap { trim: false }),
@@ -370,7 +370,7 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
         vec![
             Span::styled("j/k", Style::default().fg(ACCENT)),
             Span::raw(" navigate  "),
-            Span::styled("d", Style::default().fg(ERROR)),
+            Span::styled("d", Style::default().fg(DANGER)),
             Span::raw(" sign out  "),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::raw(" refresh  "),

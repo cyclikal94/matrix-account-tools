@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::app::{ActiveTool, App, LoginState, Screen};
 use crate::matrix::{AccountSummary, MatrixClient};
-use crate::tools::{ACCENT, ERROR, FOCUSED, MUTED, SUCCESS};
+use crate::tools::{ACCENT, ACCENT_DIM, BG3, BORDER, DANGER, FG, MUTED};
 
 #[derive(Debug, Default)]
 pub struct AccountsToolState {
@@ -169,28 +169,30 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 .trim_end_matches('/')
                 .trim_start_matches("https://")
                 .trim_start_matches("http://");
-            let marker = if a.is_current {
-                Span::styled(" ✓", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD))
+            let avatar_char = a
+                .user_id
+                .trim_start_matches('@')
+                .chars()
+                .next()
+                .unwrap_or('?')
+                .to_ascii_uppercase();
+            let active_badge = if a.is_current {
+                Span::styled("  ● active", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
             } else {
                 Span::raw("")
             };
             ListItem::new(Line::from(vec![
+                Span::styled("[", Style::default().fg(BORDER)),
+                Span::styled(avatar_char.to_string(), Style::default().fg(MUTED)),
+                Span::styled("] ", Style::default().fg(BORDER)),
                 Span::styled(
                     a.user_id.clone(),
                     Style::default()
-                        .fg(if a.is_current {
-                            SUCCESS
-                        } else {
-                            ratatui::style::Color::White
-                        })
-                        .add_modifier(if a.is_current {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
+                        .fg(if a.is_current { FG } else { MUTED })
+                        .add_modifier(if a.is_current { Modifier::BOLD } else { Modifier::empty() }),
                 ),
-                marker,
                 Span::styled(format!("  {hs}"), Style::default().fg(MUTED)),
+                active_badge,
             ]))
         })
         .collect();
@@ -200,18 +202,18 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .title(Span::styled(
                     format!(" {} account(s) ", app.accounts_tool.accounts.len()),
-                    Style::default().fg(ACCENT),
+                    Style::default().fg(MUTED),
                 ))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ACCENT)),
+                .border_style(Style::default().fg(BORDER)),
         )
         .highlight_style(
             Style::default()
-                .bg(ratatui::style::Color::Rgb(40, 60, 80))
-                .fg(FOCUSED)
+                .bg(BG3)
+                .fg(ACCENT_DIM)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("▶ ");
+        .highlight_symbol("▌ ");
 
     let mut state = ListState::default();
     state.select(Some(app.accounts_tool.selected));
@@ -221,7 +223,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         f.render_stateful_widget(list, chunks[0], &mut state);
         f.render_widget(
             Paragraph::new(err.as_str())
-                .style(Style::default().fg(ERROR))
+                .style(Style::default().fg(DANGER))
                 .alignment(Alignment::Center),
             chunks[1],
         );
@@ -238,7 +240,7 @@ pub fn hint_spans() -> Vec<Span<'static>> {
         Span::raw(" switch  "),
         Span::styled("a", Style::default().fg(ACCENT)),
         Span::raw(" add  "),
-        Span::styled("d", Style::default().fg(ERROR)),
+        Span::styled("d", Style::default().fg(DANGER)),
         Span::raw(" remove  "),
         Span::styled(":", Style::default().fg(ACCENT)),
         Span::raw(" command  "),

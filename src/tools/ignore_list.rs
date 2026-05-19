@@ -9,7 +9,7 @@ use ratatui::{
 use tokio::sync::oneshot;
 
 use crate::app::{ActiveTool, App};
-use crate::tools::{ACCENT, ERROR, FOCUSED, MUTED, SUCCESS};
+use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS};
 use crate::ui::centered_rect;
 
 // ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             .highlight_style(
                 Style::default()
                     .bg(ratatui::style::Color::Rgb(40, 60, 80))
-                    .fg(FOCUSED)
+                    .fg(ACCENT_DIM)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▶ ");
@@ -244,12 +244,12 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             let prompt_text = app.ignore_list.add_prompt.as_deref().unwrap_or("");
             f.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(" Ignore user: ", Style::default().fg(FOCUSED)),
+                    Span::styled(" Ignore user: ", Style::default().fg(ACCENT_DIM)),
                     Span::styled(
                         prompt_text.to_owned(),
                         Style::default().fg(ratatui::style::Color::White),
                     ),
-                    Span::styled("█", Style::default().fg(FOCUSED)),
+                    Span::styled("█", Style::default().fg(ACCENT_DIM)),
                 ])),
                 row,
             );
@@ -259,7 +259,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             if let Some(err) = &app.ignore_list.error {
                 f.render_widget(
                     Paragraph::new(err.as_str())
-                        .style(Style::default().fg(ERROR))
+                        .style(Style::default().fg(DANGER))
                         .alignment(Alignment::Center),
                     Rect::new(sub.x, sub.y, sub.width, 1),
                 );
@@ -290,7 +290,7 @@ fn draw_confirm(f: &mut Frame, app: &App) {
             Span::raw("  Unignore "),
             Span::styled(
                 user.to_owned(),
-                Style::default().fg(FOCUSED).add_modifier(Modifier::BOLD),
+                Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD),
             ),
             Span::raw("?"),
         ]),
@@ -303,7 +303,7 @@ fn draw_confirm(f: &mut Frame, app: &App) {
             Span::raw("  confirm    "),
             Span::styled(
                 "any other key",
-                Style::default().fg(ERROR).add_modifier(Modifier::BOLD),
+                Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
             ),
             Span::raw("  cancel"),
         ]),
@@ -315,10 +315,10 @@ fn draw_confirm(f: &mut Frame, app: &App) {
                 Block::default()
                     .title(Span::styled(
                         " Confirm ",
-                        Style::default().fg(ERROR).add_modifier(Modifier::BOLD),
+                        Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
                     ))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ERROR))
+                    .border_style(Style::default().fg(DANGER))
                     .style(Style::default().bg(ratatui::style::Color::Rgb(25, 15, 15))),
             )
             .wrap(Wrap { trim: false }),
@@ -329,7 +329,7 @@ fn draw_confirm(f: &mut Frame, app: &App) {
 pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
     if app.ignore_list.add_prompt.is_some() {
         vec![
-            Span::styled("Type", Style::default().fg(FOCUSED)),
+            Span::styled("Type", Style::default().fg(ACCENT_DIM)),
             Span::raw(" user ID  "),
             Span::styled("Enter", Style::default().fg(SUCCESS)),
             Span::raw(" submit  "),
@@ -342,7 +342,7 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
             Span::raw(" navigate  "),
             Span::styled("a", Style::default().fg(ACCENT)),
             Span::raw(" add  "),
-            Span::styled("d", Style::default().fg(ERROR)),
+            Span::styled("d", Style::default().fg(DANGER)),
             Span::raw(" unignore  "),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::raw(" refresh  "),
