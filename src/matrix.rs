@@ -52,8 +52,10 @@ pub struct MemberInfo {
     pub user_id: String,
     pub display_name: Option<String>,
     pub power_level: i64,
+    pub is_self: bool,
     pub can_kick: bool,
     pub can_ban: bool,
+    pub can_set_power_level: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +314,8 @@ impl MatrixClient {
     }
 
     pub async fn get_room_members(&self, room_id_str: &str) -> Result<Vec<MemberInfo>> {
+        use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
+
         let room_id = <&RoomId>::try_from(room_id_str)
             .with_context(|| format!("Invalid room ID: {room_id_str}"))?;
         let room = self
@@ -319,34 +323,101 @@ impl MatrixClient {
             .get_room(room_id)
             .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
         let own_id = self.inner.user_id().map(|id| id.to_owned());
+
         let mut members = room
             .members(RoomMemberships::JOIN)
             .await
             .context("Failed to fetch members")?;
+
+        let pl_to_i64 = |pl: UserPowerLevel| match pl {
+            UserPowerLevel::Infinite => 100i64,
+            UserPowerLevel::Int(n) => i64::from(n),
+            _ => 0,
+        };
+
+        // Determine own power level for can_set_power_level checks.
+        let own_pl = own_id
+            .as_deref()
+            .and_then(|oid| members.iter().find(|m| m.user_id() == oid))
+            .map(|m| pl_to_i64(m.normalized_power_level()))
+            .unwrap_or(0);
+
+        // Sort: self first, then by power level desc, then alphabetically.
         members.sort_by(|a, b| {
-            b.normalized_power_level()
-                .cmp(&a.normalized_power_level())
+            let a_self = own_id.as_deref() == Some(a.user_id());
+            let b_self = own_id.as_deref() == Some(b.user_id());
+            b_self
+                .cmp(&a_self)
+                .then(b.normalized_power_level().cmp(&a.normalized_power_level()))
                 .then(a.user_id().as_str().cmp(b.user_id().as_str()))
         });
-        use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
+
         Ok(members
             .iter()
-            .filter(|m| own_id.as_deref() != Some(m.user_id()))
             .map(|m| {
-                let power_level = match m.normalized_power_level() {
-                    UserPowerLevel::Infinite => 100,
-                    UserPowerLevel::Int(n) => i64::from(n),
-                    _ => 0,
-                };
+                let is_self = own_id.as_deref() == Some(m.user_id());
+                let power_level = pl_to_i64(m.normalized_power_level());
                 MemberInfo {
                     user_id: m.user_id().to_string(),
                     display_name: m.display_name().map(|s| s.to_owned()),
                     power_level,
-                    can_kick: m.can_kick(),
-                    can_ban: m.can_ban(),
+                    is_self,
+                    can_kick: !is_self && m.can_kick(),
+                    can_ban: !is_self && m.can_ban(),
+                    can_set_power_level: !is_self && own_pl > power_level,
                 }
             })
             .collect())
+    }
+
+    pub async fn set_member_power_level(
+        &self,
+        room_id_str: &str,
+        user_id_str: &str,
+        level: i64,
+    ) -> Result<()> {
+        use matrix_sdk::ruma::Int;
+        let room_id = <&RoomId>::try_from(room_id_str)
+            .with_context(|| format!("Invalid room ID: {room_id_str}"))?;
+        let user_id = <&UserId>::try_from(user_id_str)
+            .with_context(|| format!("Invalid user ID: {user_id_str}"))?;
+        let room = self
+            .inner
+            .get_room(room_id)
+            .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
+        let level_int = Int::try_from(level).map_err(|_| anyhow!("Power level out of range"))?;
+        room.update_power_levels(vec![(user_id, level_int)])
+            .await
+            .context("Failed to set power level")?;
+        Ok(())
+    }
+
+    pub async fn set_room_canonical_alias(
+        &self,
+        room_id_str: &str,
+        alias: Option<&str>,
+    ) -> Result<()> {
+        use matrix_sdk::ruma::{
+            RoomAliasId,
+            events::room::canonical_alias::RoomCanonicalAliasEventContent,
+        };
+        let room_id = <&RoomId>::try_from(room_id_str)
+            .with_context(|| format!("Invalid room ID: {room_id_str}"))?;
+        let room = self
+            .inner
+            .get_room(room_id)
+            .ok_or_else(|| anyhow!("Room {room_id_str} not found"))?;
+        let mut content = RoomCanonicalAliasEventContent::new();
+        content.alias = alias
+            .filter(|s| !s.is_empty())
+            .map(|s| RoomAliasId::parse(s))
+            .transpose()
+            .with_context(|| "Invalid alias format — expected #alias:server")?;
+        content.alt_aliases = room.alt_aliases();
+        room.send_state_event(content)
+            .await
+            .context("Failed to set canonical alias")?;
+        Ok(())
     }
 
     pub async fn set_room_name(&self, room_id_str: &str, name: String) -> Result<()> {

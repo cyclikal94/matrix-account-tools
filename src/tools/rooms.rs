@@ -41,6 +41,13 @@ pub struct LeaveItem {
 pub enum DetailField {
     Name,
     Topic,
+    Alias,
+}
+
+impl Default for DetailField {
+    fn default() -> Self {
+        Self::Name
+    }
 }
 
 #[derive(Debug, Default)]
@@ -51,12 +58,6 @@ pub struct DetailState {
     pub error: Option<String>,
     pub success: Option<String>,
     pub confirm_leave: bool,
-}
-
-impl Default for DetailField {
-    fn default() -> Self {
-        Self::Name
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +76,8 @@ pub struct MembersState {
     pub selected: usize,
     pub loading: bool,
     pub error: Option<String>,
-    pub confirm: Option<(ModAction, String)>, // (action, user_id)
+    pub confirm: Option<(ModAction, String)>,
+    pub pl_edit: Option<String>, // Some(input) when editing a member's power level
     pub load_rx: Option<oneshot::Receiver<Result<Vec<MemberInfo>, String>>>,
     pub action_rx: Option<oneshot::Receiver<Result<(), String>>>,
 }
@@ -379,13 +381,15 @@ async fn handle_detail(app: &mut App, code: KeyCode) {
         KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down => {
             app.rooms_tool.detail.focused = match app.rooms_tool.detail.focused {
                 DetailField::Name => DetailField::Topic,
-                DetailField::Topic => DetailField::Name,
+                DetailField::Topic => DetailField::Alias,
+                DetailField::Alias => DetailField::Name,
             };
         }
         KeyCode::BackTab | KeyCode::Char('k') | KeyCode::Up => {
             app.rooms_tool.detail.focused = match app.rooms_tool.detail.focused {
-                DetailField::Name => DetailField::Topic,
+                DetailField::Name => DetailField::Alias,
                 DetailField::Topic => DetailField::Name,
+                DetailField::Alias => DetailField::Topic,
             };
         }
         KeyCode::Char('e') | KeyCode::Enter => {
@@ -394,6 +398,7 @@ async fn handle_detail(app: &mut App, code: KeyCode) {
                 let current = match app.rooms_tool.detail.focused {
                     DetailField::Name => room.display_name.clone(),
                     DetailField::Topic => room.topic.clone().unwrap_or_default(),
+                    DetailField::Alias => room.alias.clone().unwrap_or_default(),
                 };
                 app.rooms_tool.detail.editing = Some(current);
                 app.rooms_tool.detail.error = None;
@@ -414,6 +419,41 @@ async fn handle_detail(app: &mut App, code: KeyCode) {
 async fn handle_members(app: &mut App, code: KeyCode) {
     let Some(ms) = &app.rooms_tool.members else { return; };
 
+    // Power level input mode.
+    if let Some(ref input) = ms.pl_edit.clone() {
+        match code {
+            KeyCode::Esc => {
+                app.rooms_tool.members.as_mut().unwrap().pl_edit = None;
+            }
+            KeyCode::Backspace => {
+                let mut s = input.clone();
+                s.pop();
+                app.rooms_tool.members.as_mut().unwrap().pl_edit = Some(s);
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() || (c == '-' && input.is_empty()) => {
+                let mut s = input.clone();
+                s.push(c);
+                app.rooms_tool.members.as_mut().unwrap().pl_edit = Some(s);
+            }
+            KeyCode::Enter => {
+                let input = input.clone();
+                let ms = app.rooms_tool.members.as_ref().unwrap();
+                let user_id = ms.members.get(ms.selected).map(|m| m.user_id.clone());
+                if let (Some(uid), Ok(level)) = (user_id, input.parse::<i64>()) {
+                    app.rooms_tool.members.as_mut().unwrap().pl_edit = None;
+                    do_set_power_level(app, uid, level).await;
+                } else {
+                    app.rooms_tool.members.as_mut().unwrap().error =
+                        Some("Invalid power level — enter an integer.".to_owned());
+                    app.rooms_tool.members.as_mut().unwrap().pl_edit = None;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Confirm dialog.
     if let Some((action, user_id)) = ms.confirm.clone() {
         match code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
@@ -443,6 +483,22 @@ async fn handle_members(app: &mut App, code: KeyCode) {
             let ms = app.rooms_tool.members.as_mut().unwrap();
             if ms.selected > 0 {
                 ms.selected -= 1;
+            }
+        }
+        KeyCode::Char('p') | KeyCode::Char('P') => {
+            let ms = app.rooms_tool.members.as_ref().unwrap();
+            if let Some(m) = ms.members.get(ms.selected) {
+                if m.can_set_power_level {
+                    let current = m.power_level.to_string();
+                    app.rooms_tool.members.as_mut().unwrap().pl_edit = Some(current);
+                    app.rooms_tool.members.as_mut().unwrap().error = None;
+                } else if m.is_self {
+                    app.rooms_tool.members.as_mut().unwrap().error =
+                        Some("Cannot change your own power level.".to_owned());
+                } else {
+                    app.rooms_tool.members.as_mut().unwrap().error =
+                        Some("Insufficient permissions.".to_owned());
+                }
             }
         }
         KeyCode::Char('K') => {
@@ -576,6 +632,10 @@ async fn do_save_field(app: &mut App) {
         match app.rooms_tool.detail.focused {
             DetailField::Name => client.set_room_name(&room_id, val.clone()).await,
             DetailField::Topic => client.set_room_topic(&room_id, &val).await,
+            DetailField::Alias => {
+                let a = if val.is_empty() { None } else { Some(val.as_str()) };
+                client.set_room_canonical_alias(&room_id, a).await
+            }
         }
     } else {
         Err(anyhow::anyhow!("Not connected"))
@@ -583,11 +643,11 @@ async fn do_save_field(app: &mut App) {
 
     match result {
         Ok(()) => {
-            // Update local cache
             if let Some(room) = app.rooms_tool.rooms.get_mut(idx) {
                 match app.rooms_tool.detail.focused {
                     DetailField::Name => room.display_name = val,
                     DetailField::Topic => room.topic = if val.is_empty() { None } else { Some(val) },
+                    DetailField::Alias => room.alias = if val.is_empty() { None } else { Some(val) },
                 }
             }
             app.rooms_tool.detail.success = Some("Saved!".to_owned());
@@ -615,6 +675,23 @@ fn start_member_load(app: &mut App) {
     tokio::spawn(async move {
         let result = client.get_room_members(&room_id).await.map_err(|e| e.to_string());
         let _ = tx.send(result);
+    });
+}
+
+async fn do_set_power_level(app: &mut App, user_id: String, level: i64) {
+    let Some(idx) = app.rooms_tool.detail_idx else { return; };
+    let Some(room) = app.rooms_tool.rooms.get(idx) else { return; };
+    let room_id = room.id.clone();
+    let Some(client) = app.matrix.clone() else { return; };
+
+    let (tx, rx) = oneshot::channel();
+    if let Some(ms) = &mut app.rooms_tool.members {
+        ms.action_rx = Some(rx);
+        ms.loading = true;
+    }
+    tokio::spawn(async move {
+        let result = client.set_member_power_level(&room_id, &user_id, level).await;
+        let _ = tx.send(result.map_err(|e| e.to_string()));
     });
 }
 
@@ -875,83 +952,87 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
     let Some(room) = app.rooms_tool.rooms.get(idx) else { return; };
     let detail = &app.rooms_tool.detail;
 
-    let name_text = detail
-        .editing
-        .as_deref()
-        .filter(|_| detail.focused == DetailField::Name)
-        .map(|s| s.to_owned())
-        .unwrap_or_else(|| room.display_name.clone());
+    let field_text = |field: DetailField, fallback: &str| -> String {
+        if detail.editing.is_some() && detail.focused == field {
+            detail.editing.as_deref().unwrap_or("").to_owned()
+        } else {
+            fallback.to_owned()
+        }
+    };
 
-    let topic_text = detail
-        .editing
-        .as_deref()
-        .filter(|_| detail.focused == DetailField::Topic)
-        .map(|s| s.to_owned())
-        .unwrap_or_else(|| room.topic.clone().unwrap_or_else(|| "(none)".to_owned()));
+    let name_text = field_text(DetailField::Name, &room.display_name);
+    let topic_text = field_text(DetailField::Topic, room.topic.as_deref().unwrap_or(""));
+    let alias_text = field_text(DetailField::Alias, room.alias.as_deref().unwrap_or(""));
 
     let make_field = |label: &str, value: &str, focused: bool, editing: bool| -> Paragraph<'static> {
         let border_color = if editing { FOCUSED } else if focused { ACCENT } else { MUTED };
-        let display = if editing { format!("{value}█") } else { value.to_owned() };
-        Paragraph::new(display).block(
-            Block::default()
-                .title(Span::styled(
-                    format!(" {label} "),
-                    Style::default().fg(border_color),
-                ))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color)),
-        )
+        let text_color = if focused || editing {
+            ratatui::style::Color::White
+        } else {
+            MUTED
+        };
+        let placeholder = if !editing && value.is_empty() {
+            "(none)".to_owned()
+        } else if editing {
+            format!("{value}█")
+        } else {
+            value.to_owned()
+        };
+        Paragraph::new(placeholder)
+            .style(Style::default().fg(text_color))
+            .block(
+                Block::default()
+                    .title(Span::styled(
+                        format!(" {label} "),
+                        Style::default().fg(border_color),
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color)),
+            )
     };
 
-    let name_editing = detail.editing.is_some() && detail.focused == DetailField::Name;
-    let topic_editing = detail.editing.is_some() && detail.focused == DetailField::Topic;
-    let name_focused = detail.focused == DetailField::Name;
-    let topic_focused = detail.focused == DetailField::Topic;
+    let editing = detail.editing.is_some();
+    let focused = detail.focused;
 
     let chunks = Layout::vertical([
-        Constraint::Length(1),  // padding
         Constraint::Length(3),  // name
-        Constraint::Length(1),  // gap
         Constraint::Length(3),  // topic
+        Constraint::Length(3),  // alias
         Constraint::Length(1),  // gap
-        Constraint::Length(5),  // info block
-        Constraint::Length(1),  // status/error
+        Constraint::Length(2),  // info (room ID + members)
+        Constraint::Length(1),  // status
         Constraint::Min(0),     // hints
     ])
     .split(area);
 
-    f.render_widget(make_field("Name", &name_text, name_focused, name_editing), chunks[1]);
-    f.render_widget(make_field("Topic", &topic_text, topic_focused, topic_editing), chunks[3]);
+    f.render_widget(
+        make_field("Name", &name_text, focused == DetailField::Name, editing && focused == DetailField::Name),
+        chunks[0],
+    );
+    f.render_widget(
+        make_field("Topic", &topic_text, focused == DetailField::Topic, editing && focused == DetailField::Topic),
+        chunks[1],
+    );
+    f.render_widget(
+        make_field("Alias", &alias_text, focused == DetailField::Alias, editing && focused == DetailField::Alias),
+        chunks[2],
+    );
 
-    // Info block.
+    // Read-only info.
     let info_lines = vec![
         Line::from(vec![
-            Span::styled(format!("{:<14}", "Room ID"), Style::default().fg(MUTED)),
+            Span::styled("ID      ", Style::default().fg(MUTED)),
             Span::styled(room.id.clone(), Style::default().fg(ratatui::style::Color::White)),
         ]),
         Line::from(vec![
-            Span::styled(format!("{:<14}", "Alias"), Style::default().fg(MUTED)),
-            Span::styled(
-                room.alias.clone().unwrap_or_else(|| "(none)".to_owned()),
-                Style::default().fg(ratatui::style::Color::White),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("{:<14}", "Members"), Style::default().fg(MUTED)),
+            Span::styled("Members ", Style::default().fg(MUTED)),
             Span::styled(
                 room.member_count.to_string(),
                 Style::default().fg(ratatui::style::Color::White),
             ),
         ]),
     ];
-    f.render_widget(
-        Paragraph::new(info_lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(MUTED)),
-        ),
-        chunks[5],
-    );
+    f.render_widget(Paragraph::new(info_lines), chunks[4]);
 
     // Status line.
     let status: Paragraph = if detail.saving {
@@ -970,7 +1051,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
     } else {
         Paragraph::new("")
     };
-    f.render_widget(status, chunks[6]);
+    f.render_widget(status, chunks[5]);
 
     let hint = if detail.editing.is_some() {
         "Enter save  •  Esc discard"
@@ -981,7 +1062,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect, idx: usize) {
         Paragraph::new(hint)
             .style(Style::default().fg(MUTED))
             .alignment(Alignment::Center),
-        chunks[7],
+        chunks[6],
     );
 
     if detail.confirm_leave {
@@ -1034,12 +1115,23 @@ fn draw_members(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // Split off a bottom row for the pl_edit prompt or error.
+    let has_prompt = ms.pl_edit.is_some();
+    let has_error = ms.error.is_some();
+    let bottom_rows = has_prompt as u16 + has_error as u16;
+    let chunks = if bottom_rows > 0 {
+        Layout::vertical([Constraint::Min(1), Constraint::Length(bottom_rows)]).split(area)
+    } else {
+        Layout::vertical([Constraint::Min(1)]).split(area)
+    };
+    let list_area = chunks[0];
+
     if ms.members.is_empty() {
         f.render_widget(
             Paragraph::new("No members found.")
                 .style(Style::default().fg(MUTED))
                 .alignment(Alignment::Center),
-            area,
+            list_area,
         );
     } else {
         let items: Vec<ListItem> = ms
@@ -1047,22 +1139,36 @@ fn draw_members(f: &mut Frame, app: &App, area: Rect) {
             .iter()
             .map(|m| {
                 let name = m.display_name.as_deref().unwrap_or(&m.user_id).to_owned();
-                let uid = if m.display_name.is_some() {
+                let uid_str = if m.display_name.is_some() {
                     format!("  {}", m.user_id)
                 } else {
                     String::new()
                 };
-                let pl = if m.power_level >= 75 {
-                    Span::styled(" ★", Style::default().fg(SUCCESS))
-                } else if m.power_level >= 25 {
-                    Span::styled(" ◆", Style::default().fg(ACCENT))
+                let self_tag = if m.is_self {
+                    Span::styled(" (you)", Style::default().fg(MUTED))
                 } else {
                     Span::raw("")
                 };
+                let pl_color = if m.power_level >= 75 {
+                    SUCCESS
+                } else if m.power_level >= 25 {
+                    ACCENT
+                } else {
+                    MUTED
+                };
+                let name_color = if m.is_self {
+                    MUTED
+                } else {
+                    ratatui::style::Color::White
+                };
                 ListItem::new(Line::from(vec![
-                    Span::styled(name, Style::default().fg(ratatui::style::Color::White)),
-                    pl,
-                    Span::styled(uid, Style::default().fg(MUTED)),
+                    Span::styled(name, Style::default().fg(name_color)),
+                    self_tag,
+                    Span::styled(uid_str, Style::default().fg(MUTED)),
+                    Span::styled(
+                        format!("  [{}]", m.power_level),
+                        Style::default().fg(pl_color),
+                    ),
                 ]))
             })
             .collect();
@@ -1093,20 +1199,35 @@ fn draw_members(f: &mut Frame, app: &App, area: Rect) {
             .highlight_symbol("▶ ");
 
         let mut state = ListState::default();
-        state.select(if ms.members.is_empty() { None } else { Some(ms.selected) });
+        state.select(Some(ms.selected.min(ms.members.len().saturating_sub(1))));
+        f.render_stateful_widget(list, list_area, &mut state);
+    }
 
-        if let Some(err) = &ms.error {
-            let ec =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
-            f.render_stateful_widget(list, ec[0], &mut state);
+    // Bottom area: pl_edit prompt then error.
+    if bottom_rows > 0 {
+        let mut sub = chunks[1];
+        if has_prompt {
+            let row = Rect::new(sub.x, sub.y, sub.width, 1);
+            let input = ms.pl_edit.as_deref().unwrap_or("");
             f.render_widget(
-                Paragraph::new(err.as_str())
-                    .style(Style::default().fg(ERROR))
-                    .alignment(Alignment::Center),
-                ec[1],
+                Paragraph::new(Line::from(vec![
+                    Span::styled(" Set power level: ", Style::default().fg(FOCUSED)),
+                    Span::styled(input.to_owned(), Style::default().fg(ratatui::style::Color::White)),
+                    Span::styled("█", Style::default().fg(FOCUSED)),
+                ])),
+                row,
             );
-        } else {
-            f.render_stateful_widget(list, area, &mut state);
+            sub = Rect::new(sub.x, sub.y + 1, sub.width, sub.height.saturating_sub(1));
+        }
+        if has_error {
+            if let Some(err) = &ms.error {
+                f.render_widget(
+                    Paragraph::new(err.as_str())
+                        .style(Style::default().fg(ERROR))
+                        .alignment(Alignment::Center),
+                    Rect::new(sub.x, sub.y, sub.width, 1),
+                );
+            }
         }
     }
 
@@ -1156,10 +1277,20 @@ fn draw_mod_confirm(f: &mut Frame, action: ModAction, user_id: &str) {
 // ---------------------------------------------------------------------------
 
 pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
-    if app.rooms_tool.members.is_some() {
+    if let Some(ms) = &app.rooms_tool.members {
+        if ms.pl_edit.is_some() {
+            return vec![
+                Span::styled("Enter", Style::default().fg(SUCCESS)),
+                Span::raw(" set power level  "),
+                Span::styled("Esc", Style::default().fg(ACCENT)),
+                Span::raw(" cancel"),
+            ];
+        }
         return vec![
             Span::styled("j/k", Style::default().fg(ACCENT)),
             Span::raw(" navigate  "),
+            Span::styled("p", Style::default().fg(ACCENT)),
+            Span::raw(" power level  "),
             Span::styled("K", Style::default().fg(ERROR)),
             Span::raw(" kick  "),
             Span::styled("b", Style::default().fg(ERROR)),
