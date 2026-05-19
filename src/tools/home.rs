@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::app::{App, COMMANDS};
-use crate::tools::{ACCENT, BG, BG2, BG3, BORDER, DANGER, MUTED};
+use crate::tools::{ACCENT, BG, BG2, BG3, BORDER, MUTED};
 
 #[derive(Debug, Default)]
 pub struct HomeState {
@@ -85,31 +85,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let total_unread: u64 = app.rooms_tool.rooms.iter().map(|r| r.unread).sum();
     let total_mentions: u64 = app.rooms_tool.rooms.iter().map(|r| r.mentions).sum();
 
-    let server_count = {
-        let servers: std::collections::HashSet<&str> = app
-            .rooms_tool
-            .rooms
-            .iter()
-            .filter_map(|r| r.id.split(':').nth(1))
-            .collect();
-        servers.len()
-    };
-    let rooms_subtitle = if server_count <= 1 {
-        "joined rooms".to_owned()
-    } else {
-        format!("across {} servers", server_count)
-    };
-
     let device_count = app.devices.devices.len();
-    let current_devices = app.devices.devices.iter().filter(|d| d.is_current).count();
-    let other_devices = device_count.saturating_sub(current_devices);
-    let devices_subtitle = if device_count == 0 {
-        "—".to_owned()
-    } else if other_devices > 0 {
-        format!("{} current · {} others", current_devices, other_devices)
-    } else {
-        format!("{} device(s)", device_count)
-    };
 
     let show_commands: Vec<(&str, &str)> = COMMANDS
         .iter()
@@ -128,7 +104,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(1), // [5] subtitle ("signed in as …")
         Constraint::Length(1), // [6] separator line
         Constraint::Length(1), // [7] gap
-        Constraint::Length(6), // [8] stats grid (taller boxes)
+        Constraint::Length(5), // [8] stats grid
         Constraint::Length(2), // [9] gap before commands
         Constraint::Length(1), // [10] "COMMANDS" header
         Constraint::Length(cmd_rows), // [11] command rows
@@ -196,13 +172,13 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     ])
     .split(stats_area);
 
-    let render_stat = |f: &mut Frame, area: Rect, label: &str, value: &str, subtitle: &str, value_color: Color| {
+    let render_stat = |f: &mut Frame, area: Rect, label: &str, value: &str| {
         let inner = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
+        // label | gap (expands) | value — no top/bottom padding, gap sits between
         let inner_chunks = Layout::vertical([
             Constraint::Length(1), // label
+            Constraint::Min(0),    // gap
             Constraint::Length(1), // value
-            Constraint::Length(1), // subtitle
-            Constraint::Min(0),
         ])
         .split(inner);
 
@@ -221,35 +197,18 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         );
         f.render_widget(
             Paragraph::new(value.to_owned())
-                .style(Style::default().fg(value_color).bg(BG2).add_modifier(Modifier::BOLD))
-                .alignment(Alignment::Center),
-            inner_chunks[1],
-        );
-        f.render_widget(
-            Paragraph::new(subtitle.to_owned())
-                .style(Style::default().fg(Color::Rgb(79, 87, 94)).bg(BG2))
+                .style(Style::default().fg(Color::Rgb(237, 239, 242)).bg(BG2).add_modifier(Modifier::BOLD))
                 .alignment(Alignment::Center),
             inner_chunks[2],
         );
     };
 
-    // Fill the gap columns with BG2 so borders don't float on BG.
-    for gap_idx in [1usize, 3, 5] {
-        f.render_widget(
-            Block::default().style(Style::default().bg(BG)),
-            stat_cols[gap_idx],
-        );
-    }
-
-    let unread_color = if total_unread > 0 { ACCENT } else { Color::Rgb(115, 125, 133) };
-    let mentions_color = if total_mentions > 0 { DANGER } else { Color::Rgb(115, 125, 133) };
     let device_value = if device_count > 0 { device_count.to_string() } else { "—".to_owned() };
-    let device_color = if device_count > 0 { Color::Rgb(237, 239, 242) } else { Color::Rgb(115, 125, 133) };
 
-    render_stat(f, stat_cols[0], "ROOMS JOINED", &room_count.to_string(), &rooms_subtitle, Color::Rgb(237, 239, 242));
-    render_stat(f, stat_cols[2], "UNREAD", &total_unread.to_string(), "messages", unread_color);
-    render_stat(f, stat_cols[4], "MENTIONS", &total_mentions.to_string(), "highlights", mentions_color);
-    render_stat(f, stat_cols[6], "DEVICES", &device_value, &devices_subtitle, device_color);
+    render_stat(f, stat_cols[0], "ROOMS JOINED", &room_count.to_string());
+    render_stat(f, stat_cols[2], "UNREAD", &total_unread.to_string());
+    render_stat(f, stat_cols[4], "MENTIONS", &total_mentions.to_string());
+    render_stat(f, stat_cols[6], "DEVICES", &device_value);
 
     // Commands section.
     f.render_widget(
