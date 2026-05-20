@@ -1360,19 +1360,16 @@ fn draw_devices_list(f: &mut Frame, app: &App, area: Rect) {
             })
             .collect();
 
-        let list = List::new(items)
-            .highlight_style(
-                Style::default()
-                    .bg(BG3)
-                    .fg(ACCENT_DIM)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("▌ ");
+        let list = if tab_focused {
+            List::new(items)
+                .highlight_style(Style::default().bg(BG3).fg(ACCENT_DIM).add_modifier(Modifier::BOLD))
+                .highlight_symbol("▌ ")
+        } else {
+            List::new(items).highlight_symbol("  ")
+        };
 
         let mut state = ListState::default();
-        if tab_focused {
-            state.select(Some(app.accounts_tool.devices_selected));
-        }
+        state.select(Some(app.accounts_tool.devices_selected));
 
         if let Some(err) = &app.accounts_tool.devices_error {
             let chunks = Layout::vertical([
@@ -1443,19 +1440,16 @@ fn draw_ignored_list(f: &mut Frame, app: &App, area: Rect) {
             })
             .collect();
 
-        let list = List::new(items)
-            .highlight_style(
-                Style::default()
-                    .bg(BG3)
-                    .fg(ACCENT_DIM)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("▌ ");
+        let list = if tab_focused {
+            List::new(items)
+                .highlight_style(Style::default().bg(BG3).fg(ACCENT_DIM).add_modifier(Modifier::BOLD))
+                .highlight_symbol("▌ ")
+        } else {
+            List::new(items).highlight_symbol("  ")
+        };
 
         let mut state = ListState::default();
-        if tab_focused {
-            state.select(Some(app.accounts_tool.ignored_selected));
-        }
+        state.select(Some(app.accounts_tool.ignored_selected));
         f.render_stateful_widget(list, list_area, &mut state);
     }
 
