@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -137,11 +137,13 @@ pub struct App {
     pub profile: profile::ProfileState,
     pub devices: devices::DevicesState,
 
+    // Global toast notification (message, color, timestamp — auto-expires after 3 s)
+    pub toast: Option<(String, ratatui::style::Color, Instant)>,
+
     // Matrix
     pub matrix: Option<MatrixClient>,
     pub current_user_id: Option<String>,
     pub sync_task: Option<tokio::task::JoinHandle<()>>,
-    pub last_sync_at: Option<std::time::Instant>,
 }
 
 impl App {
@@ -159,10 +161,10 @@ impl App {
             ignore_list: ignore_list::IgnoreListState::default(),
             profile: profile::ProfileState::default(),
             devices: devices::DevicesState::default(),
+            toast: None,
             matrix: None,
             current_user_id: None,
             sync_task: None,
-            last_sync_at: None,
         };
 
         match MatrixClient::restore_current().await {
@@ -171,7 +173,9 @@ impl App {
                 app.current_user_id = Some(client.user_id());
                 app.matrix = Some(client);
                 app.screen = Screen::Main;
+                rooms::do_load_rooms(&mut app).await;
                 profile::start_load(&mut app);
+                devices::start_load(&mut app);
             }
             Ok(None) => {}
             Err(e) => {
@@ -393,6 +397,9 @@ async fn do_login(app: &mut App) {
             app.screen = Screen::Main;
             app.active_tool = ActiveTool::Home;
             accounts::do_load_accounts(app).await;
+            rooms::do_load_rooms(app).await;
+            profile::start_load(app);
+            devices::start_load(app);
         }
         Err(e) => {
             app.login.loading = false;
