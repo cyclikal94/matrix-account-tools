@@ -987,10 +987,15 @@ fn draw_list_panel(f: &mut Frame, app: &App, area: Rect) {
         .max()
         .unwrap_or(0);
 
+    // Available content width: area minus borders(2), h-padding(2), highlight symbol(2).
+    // Fixed chars per row: "[C] "(4) + uid_col_w + "  "(2) + " ●"(2) = uid_col_w + 8.
+    let content_w = area.width.saturating_sub(6) as usize;
+    let hs_col_w = content_w.saturating_sub(uid_col_w + 8);
+
     let items: Vec<ListItem> = filtered
         .iter()
         .map(|a| {
-            let hs = a.homeserver
+            let hs_raw = a.homeserver
                 .trim_end_matches('/')
                 .trim_start_matches("https://")
                 .trim_start_matches("http://");
@@ -1000,10 +1005,12 @@ fn draw_list_panel(f: &mut Frame, app: &App, area: Rect) {
                 .next()
                 .unwrap_or('?')
                 .to_ascii_uppercase();
-            let active_badge = if a.is_current {
-                Span::styled("  ● active", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
+            let hs_chars = hs_raw.chars().count();
+            let hs = if hs_chars > hs_col_w {
+                let t: String = hs_raw.chars().take(hs_col_w.saturating_sub(1)).collect();
+                format!("{t}…")
             } else {
-                Span::raw("")
+                format!("{hs_raw:<hs_col_w$}")
             };
             ListItem::new(Line::from(vec![
                 Span::styled("[", Style::default().fg(BORDER)),
@@ -1016,7 +1023,11 @@ fn draw_list_panel(f: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(if a.is_current { Modifier::BOLD } else { Modifier::empty() }),
                 ),
                 Span::styled(format!("  {hs}"), Style::default().fg(MUTED2)),
-                active_badge,
+                if a.is_current {
+                    Span::styled(" ●", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
+                } else {
+                    Span::raw("  ")
+                },
             ]))
         })
         .collect();
