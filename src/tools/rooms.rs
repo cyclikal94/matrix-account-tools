@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::app::{ActiveTool, App};
 use crate::matrix::{MemberInfo, RoomInfo};
 use crate::tools::{ACCENT, ACCENT_DIM, BG, BG3, BORDER, DANGER, FG, FG2, MUTED, MUTED2, SUCCESS, FilterState, Filterable, filter_hint_spans};
+use crate::tools::common::{copy_to_clipboard, handle_filter_keys};
 use crate::ui::centered_rect;
 
 impl Filterable for RoomInfo {
@@ -348,28 +349,14 @@ pub async fn handle(app: &mut App, code: KeyCode) {
 }
 
 fn handle_filter_input(app: &mut App, code: KeyCode) {
-    match code {
-        KeyCode::Esc => app.rooms_tool.filter.clear(),
-        KeyCode::Enter => app.rooms_tool.filter.active = false,
-        KeyCode::Backspace => {
-            app.rooms_tool.filter.input.pop();
-            app.rooms_tool.selected = 0;
-        }
-        KeyCode::Char(c) if c.is_ascii_digit() => {
-            let n = c.to_digit(10).unwrap() as usize;
-            if n < RoomInfo::filter_cols().len() {
-                app.rooms_tool.filter.column = if n == 0 { None } else { Some(n) };
-                app.rooms_tool.selected = 0;
-            }
-        }
-        KeyCode::Char(c) if !c.is_control() => {
-            app.rooms_tool.filter.input.push(c);
-            app.rooms_tool.selected = 0;
-        }
-        KeyCode::Down | KeyCode::Char('j') => nav_down(app),
-        KeyCode::Up | KeyCode::Char('k') => nav_up(app),
-        _ => {}
-    }
+    let filtered_len = app.rooms_tool.filtered_rooms().len();
+    handle_filter_keys(
+        &mut app.rooms_tool.filter,
+        &mut app.rooms_tool.selected,
+        filtered_len,
+        RoomInfo::filter_cols().len(),
+        code,
+    );
 }
 
 async fn handle_list(app: &mut App, code: KeyCode) {
@@ -581,45 +568,15 @@ async fn handle_members(app: &mut App, code: KeyCode) {
 
     // Members filter popup active.
     if ms.filter.active {
-        match code {
-            KeyCode::Esc => {
-                app.rooms_tool.members.as_mut().unwrap().filter.clear();
-            }
-            KeyCode::Enter => {
-                app.rooms_tool.members.as_mut().unwrap().filter.active = false;
-            }
-            KeyCode::Backspace => {
-                app.rooms_tool.members.as_mut().unwrap().filter.input.pop();
-                app.rooms_tool.members.as_mut().unwrap().selected = 0;
-            }
-            KeyCode::Char(c) if c.is_ascii_digit() => {
-                let n = c.to_digit(10).unwrap() as usize;
-                if n < MemberInfo::filter_cols().len() {
-                    let ms_mut = app.rooms_tool.members.as_mut().unwrap();
-                    ms_mut.filter.column = if n == 0 { None } else { Some(n) };
-                    ms_mut.selected = 0;
-                }
-            }
-            KeyCode::Char(c) if !c.is_control() => {
-                app.rooms_tool.members.as_mut().unwrap().filter.input.push(c);
-                app.rooms_tool.members.as_mut().unwrap().selected = 0;
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                let ms = app.rooms_tool.members.as_ref().unwrap();
-                let filtered_len = filtered_members_vec(ms).len();
-                let ms_mut = app.rooms_tool.members.as_mut().unwrap();
-                if ms_mut.selected + 1 < filtered_len {
-                    ms_mut.selected += 1;
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                let ms_mut = app.rooms_tool.members.as_mut().unwrap();
-                if ms_mut.selected > 0 {
-                    ms_mut.selected -= 1;
-                }
-            }
-            _ => {}
-        }
+        let filtered_len = filtered_members_vec(app.rooms_tool.members.as_ref().unwrap()).len();
+        let ms_mut = app.rooms_tool.members.as_mut().unwrap();
+        handle_filter_keys(
+            &mut ms_mut.filter,
+            &mut ms_mut.selected,
+            filtered_len,
+            MemberInfo::filter_cols().len(),
+            code,
+        );
         return;
     }
 
@@ -988,30 +945,6 @@ async fn do_ignore_member(app: &mut App, user_id: String) {
             }
         }
     }
-}
-
-/// Write text to the terminal clipboard via OSC 52 (works in most modern terminals).
-fn copy_to_clipboard(text: &str) {
-    use std::io::Write;
-    let b64 = encode_base64(text.as_bytes());
-    let seq = format!("\x1b]52;c;{b64}\x07");
-    let _ = std::io::stdout().write_all(seq.as_bytes());
-    let _ = std::io::stdout().flush();
-}
-
-fn encode_base64(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0];
-        let b1 = chunk.get(1).copied().unwrap_or(0);
-        let b2 = chunk.get(2).copied().unwrap_or(0);
-        out.push(CHARS[(b0 >> 2) as usize] as char);
-        out.push(CHARS[((b0 & 3) << 4 | b1 >> 4) as usize] as char);
-        out.push(if chunk.len() > 1 { CHARS[((b1 & 0xf) << 2 | b2 >> 6) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { CHARS[(b2 & 0x3f) as usize] as char } else { '=' });
-    }
-    out
 }
 
 pub async fn do_load_rooms(app: &mut App) {

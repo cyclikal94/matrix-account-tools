@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod common;
 pub mod devices;
 pub mod help;
 pub mod home;
