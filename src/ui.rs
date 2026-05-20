@@ -3,11 +3,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::{self, App, CommandBarState, COMMANDS, Screen};
-use crate::tools::{self, ACCENT, BG, BG2, BG3, BORDER, DANGER, MUTED};
+use crate::tools::{self, ACCENT, ACCENT_DIM, BG, BG2, BG3, BORDER, DANGER, FG, MUTED};
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -20,6 +20,46 @@ pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
         width.min(area.width),
         height.min(area.height),
     )
+}
+
+/// Minimal filter input popup, floating at the bottom of `area`.
+/// Column info lives in the status bar — this shows only the input and match count.
+/// Only call when `filter.active == true`.
+pub fn draw_filter_popup(
+    f: &mut Frame,
+    filter: &tools::FilterState,
+    match_count: usize,
+    total: usize,
+    area: Rect,
+) {
+    let input = &filter.input;
+    let status = format!("{match_count}/{total}");
+    let status_len = status.chars().count() as u16;
+    let input_len = input.chars().count() as u16;
+    // "  /  "(5) + input + "█"(1) + "  ·  "(5) + status + "  "(2)
+    let width = (5u16 + input_len + 1 + 5 + status_len + 2).max(24).min(area.width);
+    let height = 3u16;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + area.height.saturating_sub(4);
+    let popup = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  /  ", Style::default().fg(ACCENT_DIM)),
+            Span::styled(input.to_owned(), Style::default().fg(FG)),
+            Span::styled("█", Style::default().fg(ACCENT_DIM)),
+            Span::styled("  ·  ", Style::default().fg(MUTED)),
+            Span::styled(status, Style::default().fg(MUTED)),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(ACCENT))
+                .style(Style::default().bg(BG2)),
+        ),
+        popup,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -52,21 +92,59 @@ fn draw_main(f: &mut Frame, app: &App) {
 
     draw_header(f, app, chunks[0]);
 
+    // Uniform padding around all tool views: 1 row top/bottom, 2 chars left/right.
+    let c = chunks[1];
+    let padded = Rect::new(
+        c.x + 2,
+        c.y + 1,
+        c.width.saturating_sub(4),
+        c.height.saturating_sub(2),
+    );
+
     use crate::app::ActiveTool::*;
     match app.active_tool {
-        Home => tools::home::draw(f, app, chunks[1]),
-        Rooms => tools::rooms::draw(f, app, chunks[1]),
-        Accounts => tools::accounts::draw(f, app, chunks[1]),
-        IgnoreList => tools::ignore_list::draw(f, app, chunks[1]),
-        Profile => tools::profile::draw(f, app, chunks[1]),
-        Devices => tools::devices::draw(f, app, chunks[1]),
+        Home => tools::home::draw(f, app, padded),
+        Rooms => tools::rooms::draw(f, app, padded),
+        Accounts => tools::accounts::draw(f, app, padded),
+        IgnoreList => tools::ignore_list::draw(f, app, padded),
+        Profile => tools::profile::draw(f, app, padded),
+        Devices => tools::devices::draw(f, app, padded),
     }
 
     draw_footer(f, app, chunks[2]);
+    draw_toast(f, app, chunks[2].y);
 
     if app.show_help {
-        tools::help::draw_overlay(f);
+        tools::help::draw_overlay(f, app);
     }
+}
+
+fn draw_toast(f: &mut Frame, app: &App, footer_y: u16) {
+    let Some((msg, color, at)) = &app.toast else { return; };
+    if at.elapsed().as_secs() >= 3 { return; }
+
+    let msg_w = msg.chars().count() as u16;
+    let width = (msg_w + 6).min(f.area().width);
+    let area = f.area();
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = footer_y.saturating_sub(5);
+    let popup = Rect::new(x, y, width, 3);
+
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!("  {msg}  "),
+            Style::default().fg(*color),
+        )))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(*color))
+                .style(Style::default().bg(BG2)),
+        ),
+        popup,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -104,9 +182,24 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         _ => String::new(),
     };
 
-    let sync_text = if app.matrix.is_some() { " ● sync " } else { " ● idle " };
+    // Right side: show "● Xs ago" once synced, "● syncing" until first sync, "● idle" if not connected.
+    let (sync_label, sync_color) = match &app.matrix {
+        Some(client) => match client.last_sync_at() {
+            Some(t) => {
+                let secs = t.elapsed().as_secs();
+                let ago = match secs {
+                    0..=59 => format!("{}s ago", secs),
+                    60..=3599 => format!("{}m ago", secs / 60),
+                    _ => format!("{}h ago", secs / 3600),
+                };
+                (format!(" ● {ago} "), ACCENT)
+            }
+            None => (" ● syncing ".to_owned(), MUTED),
+        },
+        None => (" ● idle ".to_owned(), MUTED),
+    };
 
-    let right_content = format!("{sync_text} {account_str} ");
+    let right_content = format!("{sync_label} {account_str} ");
     let right_len = right_content.chars().count() as u16;
     let cols = Layout::horizontal([Constraint::Min(1), Constraint::Length(right_len)])
         .split(row);
@@ -125,9 +218,8 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         cols[0],
     );
 
-    let sync_color = if app.matrix.is_some() { ACCENT } else { MUTED };
     let right_line = Line::from(vec![
-        Span::styled(sync_text, Style::default().fg(sync_color).bg(BG2)),
+        Span::styled(sync_label, Style::default().fg(sync_color).bg(BG2)),
         Span::styled(format!(" {account_str} "), Style::default().fg(MUTED).bg(BG2)),
     ]);
     f.render_widget(
@@ -216,7 +308,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let hints = match app.active_tool {
         Home => tools::home::hint_spans(),
         Rooms => tools::rooms::hint_spans(app),
-        Accounts => tools::accounts::hint_spans(),
+        Accounts => tools::accounts::hint_spans(app),
         IgnoreList => tools::ignore_list::hint_spans(app),
         Profile => tools::profile::hint_spans(app),
         Devices => tools::devices::hint_spans(app),
@@ -267,6 +359,15 @@ fn current_mode(app: &App) -> &'static str {
     match app.active_tool {
         ActiveTool::Rooms if app.rooms_tool.leave_select => "LEAVE",
         ActiveTool::Rooms if app.rooms_tool.filter.active => "FILTER",
+        ActiveTool::Rooms
+            if app.rooms_tool.detail_members_focused
+                && app.rooms_tool.members.as_ref().map_or(false, |m| m.filter.active) =>
+        {
+            "FILTER"
+        }
+        ActiveTool::Accounts if app.accounts_tool.filter.active => "FILTER",
+        ActiveTool::IgnoreList if app.ignore_list.filter.active => "FILTER",
+        ActiveTool::Devices if app.devices.filter.active => "FILTER",
         _ => "NORMAL",
     }
 }
