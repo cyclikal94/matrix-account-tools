@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -32,7 +34,6 @@ pub struct ProfileState {
     pub loading: bool,
     pub saving: bool,
     pub error: Option<String>,
-    pub success: Option<String>,
     pub load_rx: Option<oneshot::Receiver<Result<(Option<String>, Option<String>), String>>>,
 }
 
@@ -93,7 +94,6 @@ pub async fn handle(app: &mut App, code: KeyCode) {
                 }
             }
             app.profile.error = None;
-            app.profile.success = None;
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             start_load(app);
@@ -172,7 +172,7 @@ async fn do_save(app: &mut App) {
     };
 
     match result {
-        Ok(()) => app.profile.success = Some("Saved!".to_owned()),
+        Ok(()) => app.toast = Some(("Saved!".to_owned(), SUCCESS, Instant::now())),
         Err(e) => app.profile.error = Some(format!("{e}")),
     }
     app.profile.saving = false;
@@ -312,10 +312,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             .style(Style::default().fg(DANGER))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true })
-    } else if let Some(ok) = &app.profile.success {
-        Paragraph::new(ok.as_str())
-            .style(Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center)
     } else {
         Paragraph::new("")
     };
@@ -346,6 +342,3 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
     }
 }
 
-pub fn tool_name() -> &'static str {
-    "Profile"
-}
