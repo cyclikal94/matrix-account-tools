@@ -20,11 +20,37 @@ A terminal UI for managing your Matrix account.
 - Devices tab: view logged-in sessions, sign out others
 - Ignored users tab: view, add, and remove ignored users
 
-## Usage
+## Installation
+
+Download the latest binary for your platform from [Releases](https://github.com/cyclikal94/matrix-account-tools/releases).
+
+| Platform | File |
+|---|---|
+| Linux x86_64 | `matrix-account-tools-x86_64-linux` |
+| macOS Intel | `matrix-account-tools-x86_64-macos` |
+| macOS Apple Silicon | `matrix-account-tools-aarch64-macos` |
+| Windows x86_64 | `matrix-account-tools-x86_64-windows.exe` |
+
+**macOS / Linux:**
+
+```sh
+chmod +x matrix-account-tools-*
+./matrix-account-tools-aarch64-macos   # or whichever matches your platform
+```
+
+On macOS, the binary is unsigned. If Gatekeeper blocks it, run once with:
+
+```sh
+xattr -d com.apple.quarantine matrix-account-tools-aarch64-macos
+```
+
+## Building from source
 
 ```
-cargo run
+cargo build --release
 ```
+
+## Usage
 
 On first launch you'll be prompted to log in with your Matrix user ID and password. Sessions are persisted and restored automatically. Background sync keeps room and account data fresh.
 
