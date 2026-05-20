@@ -5,70 +5,52 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use crate::tools::{ACCENT, ACCENT_DIM, MUTED};
+use crate::app::{ActiveTool, App};
+use crate::tools::{ACCENT, ACCENT_DIM, BG2, BORDER, MUTED};
 use crate::ui::centered_rect;
 
-pub fn draw_overlay(f: &mut Frame) {
-    let area = f.area();
-    let popup = centered_rect(62, 36, area);
+pub fn draw_overlay(f: &mut Frame, app: &App) {
+    let tool_lines = tool_help_lines(app);
+    let total = 3 /* top blank + global header + blank */
+        + 3 /* global rows */
+        + 1 /* blank */
+        + tool_lines.len()
+        + 2; /* blank + close hint */
+
+    let height = (total as u16 + 2).min(f.area().height.saturating_sub(2));
+    let popup = centered_rect(58, height, f.area());
     f.render_widget(Clear, popup);
 
     let section = |title: &'static str| -> Line<'static> {
-        Line::from(vec![Span::styled(
+        Line::from(Span::styled(
             format!("  {title}"),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        )])
+        ))
     };
 
     let row = |key: &'static str, desc: &'static str| -> Line<'static> {
         Line::from(vec![
             Span::styled(format!("    {key:<18}"), Style::default().fg(ACCENT_DIM)),
-            Span::styled(desc, Style::default().fg(ratatui::style::Color::White)),
+            Span::styled(desc, Style::default().fg(ratatui::style::Color::Rgb(237, 239, 242))),
         ])
     };
 
-    let lines: Vec<Line> = vec![
+    let mut lines: Vec<Line> = vec![
         Line::from(""),
         section("Global"),
         row("Ctrl+C", "Quit"),
         row(":", "Open command bar"),
-        row("?", "Toggle this help"),
+        row("?", "Toggle help"),
         Line::from(""),
-        section("Command bar"),
-        row(":home / :h", "Go to home screen"),
-        row(":leaverooms / :lr", "Leave rooms tool"),
-        row(":rooms", "Room browser"),
-        row(":accounts", "Account manager"),
-        row(":ignorelist", "Ignore list"),
-        row(":profile", "Profile editor"),
-        row(":devices", "Device manager"),
-        row(":help", "Show this help"),
-        row(":login", "Add a new account"),
-        row(":quit / :q", "Quit"),
-        Line::from(""),
-        section("Lists (Leave Rooms, Rooms, Accounts)"),
-        row("j / k  ↑↓", "Navigate"),
-        row("Space", "Toggle checkbox (Leave Rooms)"),
-        row("Enter", "Confirm / open detail"),
-        row("/", "Filter (Leave Rooms, Rooms)"),
-        row("r", "Refresh"),
-        row("Esc / q", "Back to home"),
-        Line::from(""),
-        section("Profile"),
-        row("Tab / j / k", "Switch field"),
-        row("e / Enter", "Start editing field"),
-        row("Enter (editing)", "Save field"),
-        row("Esc (editing)", "Discard edits"),
-        Line::from(""),
-        section("Accounts / Devices"),
-        row("a", "Add account"),
-        row("d / Delete", "Remove account / sign out device"),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "  Press Esc or ? to close",
-            Style::default().fg(MUTED),
-        )]),
     ];
+
+    lines.extend(tool_lines);
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Press Esc or ? to close",
+        Style::default().fg(MUTED),
+    )));
 
     f.render_widget(
         Paragraph::new(lines).block(
@@ -78,9 +60,140 @@ pub fn draw_overlay(f: &mut Frame) {
                     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                 ))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ACCENT))
-                .style(Style::default().bg(ratatui::style::Color::Rgb(18, 18, 32))),
+                .border_style(Style::default().fg(BORDER))
+                .style(Style::default().bg(BG2)),
         ),
         popup,
     );
+}
+
+fn tool_help_lines(app: &App) -> Vec<Line<'static>> {
+    let section = |title: &'static str| -> Line<'static> {
+        Line::from(Span::styled(
+            format!("  {title}"),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+    };
+    let row = |key: &'static str, desc: &'static str| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("    {key:<18}"), Style::default().fg(ACCENT_DIM)),
+            Span::styled(desc, Style::default().fg(ratatui::style::Color::Rgb(237, 239, 242))),
+        ])
+    };
+
+    match app.active_tool {
+        ActiveTool::Home => vec![
+            section("Home"),
+            row("↑↓ / k j", "Navigate rows"),
+            row("←→ / h l", "Navigate columns"),
+            row("Enter", "Open selected tool"),
+            row("q", "Quit"),
+        ],
+        ActiveTool::Rooms => {
+            let mut lines: Vec<Line> = Vec::new();
+
+            // Context-specific shortcuts based on active sub-view.
+            if app.rooms_tool.member_profile.is_some() {
+                lines.push(section("Member Profile"));
+                lines.push(row("i", "Copy MXID to clipboard"));
+                lines.push(row("I", "Ignore this user"));
+                lines.push(row("Esc", "Back to member list"));
+            } else if app.rooms_tool.detail_members_focused {
+                lines.push(section("Members"));
+                lines.push(row("j / k  ↑↓", "Navigate"));
+                lines.push(row("Enter / e", "View member profile"));
+                lines.push(row("i", "Copy MXID to clipboard"));
+                lines.push(row("I", "Ignore selected member"));
+                lines.push(row("p", "Set power level"));
+                lines.push(row("K", "Kick member"));
+                lines.push(row("b", "Ban member"));
+                lines.push(row("r", "Refresh member list"));
+                lines.push(row("d", "Back to room detail"));
+                lines.push(row("Esc / q", "Back to room list"));
+            } else if app.rooms_tool.detail_open {
+                lines.push(section("Room Detail"));
+                lines.push(row("j / k  ↑↓", "Navigate fields"));
+                lines.push(row("e / Enter", "Edit focused field"));
+                lines.push(row("PgDn / PgUp", "Scroll topic"));
+                lines.push(row("i", "Copy room ID to clipboard"));
+                lines.push(row("m", "Focus members list"));
+                lines.push(row("x", "Leave this room"));
+                lines.push(row("Esc / q", "Back to room list"));
+            } else if app.rooms_tool.leave_select {
+                lines.push(section("Leave Select"));
+                lines.push(row("j / k  ↑↓", "Navigate rooms"));
+                lines.push(row("Space", "Toggle selection"));
+                lines.push(row("Enter", "Leave selected rooms"));
+                lines.push(row("Esc", "Cancel"));
+            } else {
+                lines.push(section("Room List"));
+                lines.push(row("j / k  ↑↓", "Navigate"));
+                lines.push(row("/", "Filter rooms"));
+                lines.push(row("Enter / e / d", "Open room detail"));
+                lines.push(row("m", "Open members list"));
+                lines.push(row("x", "Enter leave-select mode"));
+                lines.push(row("r", "Refresh"));
+                lines.push(row("Esc / q", "Back to home"));
+
+                // Legend — only relevant when the room list is visible.
+                lines.push(Line::from(""));
+                lines.push(section("Legend"));
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled("●", Style::default().fg(ACCENT)),
+                    Span::styled(
+                        format!("{:<17}", " (green)"),
+                        Style::default().fg(ACCENT_DIM),
+                    ),
+                    Span::styled(
+                        "end-to-end encrypted",
+                        Style::default().fg(ratatui::style::Color::Rgb(237, 239, 242)),
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled("●", Style::default().fg(MUTED)),
+                    Span::styled(
+                        format!("{:<17}", " (grey)"),
+                        Style::default().fg(ACCENT_DIM),
+                    ),
+                    Span::styled(
+                        "not end-to-end encrypted",
+                        Style::default().fg(ratatui::style::Color::Rgb(237, 239, 242)),
+                    ),
+                ]));
+                lines.push(row("dm", "direct message"));
+            }
+            lines
+        }
+        ActiveTool::Accounts => vec![
+            section("Accounts"),
+            row("j / k  ↑↓", "Navigate"),
+            row("Enter", "Switch to account"),
+            row("a", "Add account (login)"),
+            row("d", "Remove account"),
+            row("Esc / q", "Back to home"),
+        ],
+        ActiveTool::IgnoreList => vec![
+            section("Ignore List"),
+            row("j / k  ↑↓", "Navigate"),
+            row("a", "Add user to ignore list"),
+            row("d", "Unignore selected user"),
+            row("Esc / q", "Back to home"),
+        ],
+        ActiveTool::Profile => vec![
+            section("Profile"),
+            row("j / k / Tab", "Switch field"),
+            row("e / Enter", "Edit focused field"),
+            row("Enter  (editing)", "Save field"),
+            row("Esc  (editing)", "Discard changes"),
+            row("Esc / q", "Back to home"),
+        ],
+        ActiveTool::Devices => vec![
+            section("Devices"),
+            row("j / k  ↑↓", "Navigate"),
+            row("d / Delete", "Sign out device"),
+            row("Esc / q", "Back to home"),
+        ],
+    }
 }
