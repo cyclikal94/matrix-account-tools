@@ -148,11 +148,13 @@ pub fn nav_up(selected: &mut usize) {
 // ---------------------------------------------------------------------------
 
 /// Border color for a panel: ACCENT if focused, BORDER if not.
+#[allow(dead_code)]
 pub fn panel_border_color(focused: bool) -> Color {
     if focused { ACCENT } else { BORDER }
 }
 
 /// Title color for a panel: ACCENT if focused, MUTED if not.
+#[allow(dead_code)]
 pub fn panel_title_color(focused: bool) -> Color {
     if focused { ACCENT } else { MUTED }
 }
@@ -171,6 +173,7 @@ pub fn panel_title_color(focused: bool) -> Color {
 ///
 /// # Title format
 /// `" Base Title (N) "` normally, `" Base Title (match/total) "` when filtering.
+#[allow(dead_code)]
 pub fn draw_list_block<T, F>(
     f: &mut Frame,
     base_title: &str,

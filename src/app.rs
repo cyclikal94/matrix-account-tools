@@ -6,7 +6,7 @@ use ratatui::Terminal;
 use ratatui::backend::Backend;
 
 use crate::matrix::MatrixClient;
-use crate::tools::{accounts, devices, home, ignore_list, profile, rooms};
+use crate::tools::{accounts, home, rooms};
 use crate::ui;
 
 // ---------------------------------------------------------------------------
@@ -16,10 +16,7 @@ use crate::ui;
 pub const COMMANDS: &[(&str, &str)] = &[
     ("home", "Tool selection screen"),
     ("rooms", "Browse and manage rooms"),
-    ("accounts", "Manage accounts"),
-    ("ignorelist", "Manage ignored users"),
-    ("profile", "Edit display name and avatar"),
-    ("devices", "Manage logged-in devices"),
+    ("accounts", "Manage accounts and profile"),
     ("help", "Keyboard shortcut reference"),
     ("login", "Add a new account"),
     ("quit", "Quit"),
@@ -28,9 +25,6 @@ pub const COMMANDS: &[(&str, &str)] = &[
 pub const HOME_TOOLS: &[(&str, &str)] = &[
     ("Rooms", "rooms"),
     ("Accounts", "accounts"),
-    ("Ignore List", "ignorelist"),
-    ("Profile", "profile"),
-    ("Devices", "devices"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -89,9 +83,6 @@ pub enum ActiveTool {
     Home,
     Rooms,
     Accounts,
-    IgnoreList,
-    Profile,
-    Devices,
 }
 
 // ---------------------------------------------------------------------------
@@ -133,9 +124,6 @@ pub struct App {
     pub home: home::HomeState,
     pub accounts_tool: accounts::AccountsToolState,
     pub rooms_tool: rooms::RoomBrowserState,
-    pub ignore_list: ignore_list::IgnoreListState,
-    pub profile: profile::ProfileState,
-    pub devices: devices::DevicesState,
 
     // Global toast notification (message, color, timestamp — auto-expires after 3 s)
     pub toast: Option<(String, ratatui::style::Color, Instant)>,
@@ -158,9 +146,6 @@ impl App {
             home: home::HomeState::default(),
             accounts_tool: accounts::AccountsToolState::default(),
             rooms_tool: rooms::RoomBrowserState::default(),
-            ignore_list: ignore_list::IgnoreListState::default(),
-            profile: profile::ProfileState::default(),
-            devices: devices::DevicesState::default(),
             toast: None,
             matrix: None,
             current_user_id: None,
@@ -174,8 +159,9 @@ impl App {
                 app.matrix = Some(client);
                 app.screen = Screen::Main;
                 rooms::do_load_rooms(&mut app).await;
-                profile::start_load(&mut app);
-                devices::start_load(&mut app);
+                accounts::start_profile_load(&mut app);
+                accounts::start_devices_load(&mut app);
+                accounts::start_ignored_load(&mut app);
             }
             Ok(None) => {}
             Err(e) => {
@@ -197,9 +183,7 @@ impl App {
         loop {
             rooms::poll_leave_results(self);
             rooms::poll_member_load(self);
-            ignore_list::poll_load(self);
-            profile::poll_load(self);
-            devices::poll_load(self);
+            accounts::poll(self);
 
             terminal.draw(|f| ui::draw(f, self))?;
 
@@ -283,9 +267,6 @@ pub async fn execute_command(app: &mut App, cmd: &str) {
         "home" | "h" => app.active_tool = ActiveTool::Home,
         "rooms" => navigate_to_rooms(app).await,
         "accounts" | "a" => navigate_to_accounts(app).await,
-        "ignorelist" => navigate_to_ignore_list(app),
-        "profile" => navigate_to_profile(app),
-        "devices" => navigate_to_devices(app),
         "help" => app.show_help = true,
         "login" | "l" => {
             app.login = LoginState {
@@ -313,27 +294,6 @@ async fn navigate_to_accounts(app: &mut App) {
     app.active_tool = ActiveTool::Accounts;
     app.accounts_tool.loading = true;
     accounts::do_load_accounts(app).await;
-}
-
-fn navigate_to_ignore_list(app: &mut App) {
-    app.active_tool = ActiveTool::IgnoreList;
-    if !app.ignore_list.loading {
-        ignore_list::start_load(app);
-    }
-}
-
-fn navigate_to_profile(app: &mut App) {
-    app.active_tool = ActiveTool::Profile;
-    if !app.profile.loading {
-        profile::start_load(app);
-    }
-}
-
-fn navigate_to_devices(app: &mut App) {
-    app.active_tool = ActiveTool::Devices;
-    if !app.devices.loading {
-        devices::start_load(app);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -398,8 +358,9 @@ async fn do_login(app: &mut App) {
             app.active_tool = ActiveTool::Home;
             accounts::do_load_accounts(app).await;
             rooms::do_load_rooms(app).await;
-            profile::start_load(app);
-            devices::start_load(app);
+            accounts::start_profile_load(app);
+            accounts::start_devices_load(app);
+            accounts::start_ignored_load(app);
         }
         Err(e) => {
             app.login.loading = false;
@@ -434,20 +395,17 @@ async fn handle_main_key(app: &mut App, code: KeyCode) {
         ActiveTool::Home => home::handle(app, code).await,
         ActiveTool::Rooms => rooms::handle(app, code).await,
         ActiveTool::Accounts => accounts::handle(app, code).await,
-        ActiveTool::IgnoreList => ignore_list::handle(app, code).await,
-        ActiveTool::Profile => profile::handle(app, code).await,
-        ActiveTool::Devices => devices::handle(app, code).await,
     }
 }
 
 pub fn is_text_input_active(app: &App) -> bool {
-    use crate::tools::devices::DeleteDialogState;
+    use crate::tools::accounts::DeviceDeleteDialog;
     app.rooms_tool.detail.editing.is_some()
         || app.rooms_tool.members.as_ref().map_or(false, |m| m.pl_edit.is_some())
-        || app.ignore_list.add_prompt.is_some()
-        || app.profile.is_editing()
+        || app.accounts_tool.ignored_add_prompt.is_some()
+        || app.accounts_tool.is_profile_editing()
         || matches!(
-            app.devices.delete_dialog,
-            Some((_, DeleteDialogState::EnterPassword(_)))
+            app.accounts_tool.delete_dialog,
+            Some((_, DeviceDeleteDialog::EnterPassword(_)))
         )
 }

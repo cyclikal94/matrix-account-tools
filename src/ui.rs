@@ -100,9 +100,6 @@ fn draw_main(f: &mut Frame, app: &App) {
         Home => tools::home::draw(f, app, padded),
         Rooms => tools::rooms::draw(f, app, padded),
         Accounts => tools::accounts::draw(f, app, padded),
-        IgnoreList => tools::ignore_list::draw(f, app, padded),
-        Profile => tools::profile::draw(f, app, padded),
-        Devices => tools::devices::draw(f, app, padded),
     }
 
     draw_footer(f, app, chunks[2]);
@@ -157,9 +154,6 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Home => "home",
         Rooms => ":rooms",
         Accounts => ":accounts",
-        IgnoreList => ":ignorelist",
-        Profile => ":profile",
-        Devices => ":devices",
     };
 
     let account_str = match (&app.current_user_id, &app.matrix) {
@@ -292,9 +286,6 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Home => "home",
         Rooms => ":rooms",
         Accounts => ":accounts",
-        IgnoreList => ":ignorelist",
-        Profile => ":profile",
-        Devices => ":devices",
     };
     let screen_text = format!("  {screen_name}  ");
     let screen_width = screen_text.len() as u16;
@@ -303,9 +294,6 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Home => tools::home::hint_spans(),
         Rooms => tools::rooms::hint_spans(app),
         Accounts => tools::accounts::hint_spans(app),
-        IgnoreList => tools::ignore_list::hint_spans(app),
-        Profile => tools::profile::hint_spans(app),
-        Devices => tools::devices::hint_spans(app),
     };
 
     let cols = Layout::horizontal([
@@ -360,8 +348,8 @@ fn current_mode(app: &App) -> &'static str {
             "FILTER"
         }
         ActiveTool::Accounts if app.accounts_tool.filter.active => "FILTER",
-        ActiveTool::IgnoreList if app.ignore_list.filter.active => "FILTER",
-        ActiveTool::Devices if app.devices.filter.active => "FILTER",
+        ActiveTool::Accounts if app.accounts_tool.devices_filter.active => "FILTER",
+        ActiveTool::Accounts if app.accounts_tool.ignored_filter.active => "FILTER",
         _ => "NORMAL",
     }
 }

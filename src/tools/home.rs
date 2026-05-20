@@ -67,7 +67,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     // Use localpart (not full MXID) as display name fallback.
     let display_name = app
-        .profile
+        .accounts_tool
         .display_name
         .as_deref()
         .unwrap_or_else(|| {
@@ -95,7 +95,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let total_unread: u64 = app.rooms_tool.rooms.iter().map(|r| r.unread).sum();
     let total_mentions: u64 = app.rooms_tool.rooms.iter().map(|r| r.mentions).sum();
 
-    let device_count = app.devices.devices.len();
+    let device_count = app.accounts_tool.devices.len();
 
     let show_commands: Vec<(&str, &str)> = COMMANDS
         .iter()

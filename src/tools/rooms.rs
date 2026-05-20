@@ -1569,7 +1569,7 @@ fn draw_members_block(f: &mut Frame, app: &App, area: Rect) {
                 ]),
             ]
         } else {
-            let is_ignored = app.ignore_list.users.iter().any(|u| u == &profile.user_id);
+            let is_ignored = app.accounts_tool.ignored_users.iter().any(|u| u == &profile.user_id);
             vec![
                 Line::from(vec![
                     Span::raw(" "),

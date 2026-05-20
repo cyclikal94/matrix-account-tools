@@ -177,14 +177,28 @@ fn tool_help_lines(app: &App) -> Vec<Line<'static>> {
             }
             lines
         }
-        ActiveTool::Accounts  => from_cmds("Accounts",    crate::tools::accounts::CMDS),
-        ActiveTool::IgnoreList => from_cmds("Ignore List", crate::tools::ignore_list::CMDS),
-        ActiveTool::Devices    => from_cmds("Devices",     crate::tools::devices::CMDS),
-        ActiveTool::Profile => {
-            let mut lines = from_cmds("Profile", crate::tools::profile::CMDS);
-            lines.push(Line::from(""));
-            lines.extend(from_cmds("While Editing", crate::tools::profile::CMDS_EDITING));
-            lines
+        ActiveTool::Accounts => {
+            use crate::tools::accounts::{AccountTab, CMDS_LIST, CMDS_DETAIL, CMDS_EDITING,
+                                          CMDS_DEVICES, CMDS_IGNORED, CMDS_IGNORED_ADD};
+            let at = &app.accounts_tool;
+            if at.delete_dialog.is_some() || at.ignored_confirm_unignore {
+                vec![]
+            } else if at.ignored_add_prompt.is_some() {
+                from_cmds("Add Ignored User", CMDS_IGNORED_ADD)
+            } else if at.detail_open && at.detail_tab_focused {
+                match at.active_tab {
+                    AccountTab::Devices => from_cmds("Devices Tab", CMDS_DEVICES),
+                    AccountTab::IgnoredUsers => from_cmds("Ignored Users Tab", CMDS_IGNORED),
+                }
+            } else if at.detail_open {
+                if at.is_profile_editing() {
+                    from_cmds("Editing Profile", CMDS_EDITING)
+                } else {
+                    from_cmds("Account Detail", CMDS_DETAIL)
+                }
+            } else {
+                from_cmds("Accounts", CMDS_LIST)
+            }
         }
     }
 }

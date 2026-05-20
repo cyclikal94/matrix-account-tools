@@ -1,10 +1,7 @@
 pub mod accounts;
 pub mod common;
-pub mod devices;
 pub mod help;
 pub mod home;
-pub mod ignore_list;
-pub mod profile;
 pub mod rooms;
 
 use ratatui::style::{Color, Style};
