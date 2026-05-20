@@ -4,6 +4,8 @@ A terminal UI for managing your Matrix account.
 
 *Disclaimer:* Built with the help of AI (Claude Sonnet 4.6)
 
+<img width="1002" height="527" alt="image" src="https://github.com/user-attachments/assets/0fe945f5-f8b6-4e2e-8e6a-aeead8008b8c" />
+
 ## Tools
 
 ### `:rooms` — Room browser
