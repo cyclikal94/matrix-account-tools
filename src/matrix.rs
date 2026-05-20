@@ -1,5 +1,6 @@
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use matrix_sdk::{
@@ -42,8 +43,7 @@ pub struct AccountSummary {
 pub struct RoomInfo {
     pub id: String,
     pub display_name: String,
-    pub member_count: u64,
-    pub alias: Option<String>,
+    pub aliases: Vec<String>,
     pub topic: Option<String>,
     pub unread: u64,
     pub mentions: u64,
@@ -91,6 +91,7 @@ pub struct DeviceInfo {
 #[derive(Clone)]
 pub struct MatrixClient {
     inner: Client,
+    last_sync: Arc<Mutex<Option<Instant>>>,
 }
 
 impl MatrixClient {
@@ -219,7 +220,7 @@ impl MatrixClient {
             .await
             .context("Failed to restore session")?;
 
-        Ok(Some(MatrixClient { inner: client }))
+        Ok(Some(MatrixClient { inner: client, last_sync: Arc::new(Mutex::new(None)) }))
     }
 
     /// Login with a new account, persist it, return a ready client.
@@ -273,7 +274,7 @@ impl MatrixClient {
         file.current = Some(user_id);
         Self::save_accounts_file(&file).await?;
 
-        Ok(MatrixClient { inner: client })
+        Ok(MatrixClient { inner: client, last_sync: Arc::new(Mutex::new(None)) })
     }
 
     /// Remove an account and clean up its store directory.
@@ -305,21 +306,21 @@ impl MatrixClient {
                 Ok(name) => name.to_string(),
                 Err(_) => room.room_id().to_string(),
             };
-            let alias = room.canonical_alias().map(|a| a.to_string());
+            let mut aliases: Vec<String> = Vec::new();
+            if let Some(ca) = room.canonical_alias() {
+                aliases.push(ca.to_string());
+            }
+            aliases.extend(room.alt_aliases().iter().map(|a| a.to_string()));
+
             let topic = room.topic();
-            let member_count = room
-                .members_no_sync(RoomMemberships::JOIN)
-                .await
-                .map(|m| m.len() as u64)
-                .unwrap_or_else(|_| room.joined_members_count());
 
             let counts = room.unread_notification_counts();
             let unread = counts.notification_count;
             let mentions = counts.highlight_count;
 
             let last_active = room
-                .latest_event_timestamp()
-                .map(|ts| format_duration_ago(ts.0.into()));
+                .recency_stamp()
+                .map(|rs| format_duration_ago(u64::from(rs)));
 
             let encrypted = room.encryption_state().is_encrypted();
             let is_dm = room.is_dm();
@@ -333,8 +334,7 @@ impl MatrixClient {
             infos.push(RoomInfo {
                 id: room.room_id().to_string(),
                 display_name,
-                member_count,
-                alias,
+                aliases,
                 topic,
                 unread,
                 mentions,
@@ -517,13 +517,31 @@ impl MatrixClient {
 
     pub fn start_background_sync(&self) -> tokio::task::JoinHandle<()> {
         let client = self.inner.clone();
+        let last_sync = self.last_sync.clone();
         tokio::spawn(async move {
+            let mut token: Option<String> = None;
             loop {
-                if let Err(_) = client.sync(SyncSettings::default()).await {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                let settings = match token.as_deref() {
+                    Some(t) => SyncSettings::default().token(t),
+                    None => SyncSettings::default(),
+                };
+                match client.sync_once(settings).await {
+                    Ok(resp) => {
+                        token = Some(resp.next_batch);
+                        if let Ok(mut guard) = last_sync.lock() {
+                            *guard = Some(Instant::now());
+                        }
+                    }
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
                 }
             }
         })
+    }
+
+    pub fn last_sync_at(&self) -> Option<Instant> {
+        self.last_sync.lock().ok().and_then(|g| *g)
     }
 
     pub async fn get_ignored_users(&self) -> Result<Vec<String>> {
