@@ -982,6 +982,11 @@ fn draw_list_panel(f: &mut Frame, app: &App, area: Rect) {
         format!(" Accounts ({total}) ")
     };
 
+    let uid_col_w = filtered.iter()
+        .map(|a| a.user_id.chars().count())
+        .max()
+        .unwrap_or(0);
+
     let items: Vec<ListItem> = filtered
         .iter()
         .map(|a| {
@@ -1005,7 +1010,7 @@ fn draw_list_panel(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(avatar_char.to_string(), Style::default().fg(MUTED)),
                 Span::styled("] ", Style::default().fg(BORDER)),
                 Span::styled(
-                    a.user_id.clone(),
+                    format!("{:<uid_col_w$}", a.user_id),
                     Style::default()
                         .fg(if a.is_current { FG } else { MUTED })
                         .add_modifier(if a.is_current { Modifier::BOLD } else { Modifier::empty() }),
@@ -1326,30 +1331,45 @@ fn draw_devices_list(f: &mut Frame, app: &App, area: Rect) {
             area,
         );
     } else {
+        // Pre-compute column widths across all filtered rows.
+        // name_col_w includes the " ✓" marker (2 chars) for current devices.
+        let name_col_w = filtered.iter()
+            .map(|d| {
+                d.display_name.as_deref().unwrap_or("(unnamed)").chars().count()
+                    + if d.is_current { 2 } else { 0 }
+            })
+            .max()
+            .unwrap_or(0)
+            .min(36);
+        let id_col_w = filtered.iter()
+            .map(|d| d.device_id.chars().count())
+            .max()
+            .unwrap_or(0);
+
         let items: Vec<ListItem> = filtered
             .iter()
             .map(|d| {
-                let name = d.display_name.as_deref().unwrap_or("(unnamed)").to_owned();
-                let current_marker = if d.is_current {
-                    Span::styled(" ✓", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD))
-                } else {
-                    Span::raw("")
-                };
+                let name = d.display_name.as_deref().unwrap_or("(unnamed)");
+                let name_len = name.chars().count();
+                let (marker, marker_len): (&'static str, usize) =
+                    if d.is_current { (" ✓", 2) } else { ("", 0) };
+                let pad = name_col_w.saturating_sub(name_len + marker_len);
                 let last_info = match (&d.last_seen_ts, &d.last_seen_ip) {
                     (Some(ts), Some(ip)) => format!("  {ts}  {ip}"),
-                    (Some(ts), None) => format!("  {ts}"),
-                    (None, Some(ip)) => format!("  {ip}"),
-                    (None, None) => String::new(),
+                    (Some(ts), None)     => format!("  {ts}"),
+                    (None,     Some(ip)) => format!("  {ip}"),
+                    (None,     None)     => String::new(),
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(
-                        name,
+                        name.to_owned(),
                         Style::default()
                             .fg(if d.is_current { SUCCESS } else { FG2 })
                             .add_modifier(if d.is_current { Modifier::BOLD } else { Modifier::empty() }),
                     ),
-                    current_marker,
-                    Span::styled(format!("  {}", d.device_id), Style::default().fg(MUTED)),
+                    Span::styled(marker, Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
+                    Span::raw(format!("{:<pad$}  ", "")),
+                    Span::styled(format!("{:<id_col_w$}", d.device_id), Style::default().fg(MUTED)),
                     Span::styled(last_info, Style::default().fg(MUTED)),
                 ]))
             })
