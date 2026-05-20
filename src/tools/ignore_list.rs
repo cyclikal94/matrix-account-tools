@@ -4,13 +4,15 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap},
 };
 use tokio::sync::oneshot;
 
 use crate::app::{ActiveTool, App};
-use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS};
+use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS, FilterState, filter_hint_spans};
 use crate::ui::centered_rect;
+
+const IGNORE_COLS: &[&str] = &["all"];
 
 // ---------------------------------------------------------------------------
 // State
@@ -26,6 +28,7 @@ pub struct IgnoreListState {
     pub add_prompt: Option<String>,
     pub confirm_unignore: bool,
     pub load_rx: Option<oneshot::Receiver<Result<Vec<String>, String>>>,
+    pub filter: FilterState,
 }
 
 // ---------------------------------------------------------------------------
@@ -86,12 +89,49 @@ pub async fn handle(app: &mut App, code: KeyCode) {
         return;
     }
 
+    // Filter popup active.
+    if app.ignore_list.filter.active {
+        match code {
+            KeyCode::Esc => app.ignore_list.filter.clear(),
+            KeyCode::Enter => app.ignore_list.filter.active = false,
+            KeyCode::Backspace => {
+                app.ignore_list.filter.input.pop();
+                app.ignore_list.selected = 0;
+            }
+            KeyCode::Char(c) if !c.is_control() => {
+                app.ignore_list.filter.input.push(c);
+                app.ignore_list.selected = 0;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let len = filtered_users(app).len();
+                if app.ignore_list.selected + 1 < len {
+                    app.ignore_list.selected += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if app.ignore_list.selected > 0 {
+                    app.ignore_list.selected -= 1;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match code {
         KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-            app.active_tool = ActiveTool::Home;
+            if !app.ignore_list.filter.input.is_empty() {
+                app.ignore_list.filter.clear();
+            } else {
+                app.active_tool = ActiveTool::Home;
+            }
+        }
+        KeyCode::Char('/') => {
+            app.ignore_list.filter.active = true;
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            if app.ignore_list.selected + 1 < app.ignore_list.users.len() {
+            let len = filtered_users(app).len();
+            if app.ignore_list.selected + 1 < len {
                 app.ignore_list.selected += 1;
             }
         }
@@ -105,7 +145,7 @@ pub async fn handle(app: &mut App, code: KeyCode) {
             app.ignore_list.error = None;
         }
         KeyCode::Char('d') | KeyCode::Delete => {
-            if !app.ignore_list.users.is_empty() {
+            if !filtered_users(app).is_empty() {
                 app.ignore_list.confirm_unignore = true;
             }
         }
@@ -116,12 +156,22 @@ pub async fn handle(app: &mut App, code: KeyCode) {
     }
 }
 
+fn filtered_users(app: &App) -> Vec<&String> {
+    app.ignore_list
+        .users
+        .iter()
+        .filter(|u| app.ignore_list.filter.matches(u))
+        .collect()
+}
+
 async fn do_unignore(app: &mut App) {
     app.ignore_list.confirm_unignore = false;
-    let user_id = match app.ignore_list.users.get(app.ignore_list.selected) {
-        Some(u) => u.clone(),
+    let users = filtered_users(app);
+    let user_id = match users.get(app.ignore_list.selected) {
+        Some(u) => (*u).clone(),
         None => return,
     };
+    drop(users);
     if let Some(client) = &app.matrix {
         match client.unignore_user(&user_id).await {
             Ok(()) => app.ignore_list.error = None,
@@ -194,35 +244,54 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let list_area = chunks[0];
     let bottom_area = if extra > 0 { Some(chunks[1]) } else { None };
 
-    if app.ignore_list.users.is_empty() {
+    let filtered: Vec<&String> = app
+        .ignore_list
+        .users
+        .iter()
+        .filter(|u| app.ignore_list.filter.matches(u))
+        .collect();
+
+    let total = app.ignore_list.users.len();
+    let match_count = filtered.len();
+
+    if filtered.is_empty() && app.ignore_list.users.is_empty() {
         f.render_widget(
             Paragraph::new("No ignored users.\n\nPress 'a' to ignore a user.")
                 .style(Style::default().fg(MUTED))
                 .alignment(Alignment::Center),
             list_area,
         );
+    } else if filtered.is_empty() {
+        f.render_widget(
+            Paragraph::new("No matches.")
+                .style(Style::default().fg(MUTED))
+                .alignment(Alignment::Center),
+            list_area,
+        );
     } else {
-        let items: Vec<ListItem> = app
-            .ignore_list
-            .users
+        let items: Vec<ListItem> = filtered
             .iter()
             .map(|u| {
                 ListItem::new(Span::styled(
-                    u.clone(),
+                    (*u).clone(),
                     Style::default().fg(ratatui::style::Color::White),
                 ))
             })
             .collect();
 
+        let title = if !app.ignore_list.filter.input.is_empty() {
+            format!(" {match_count} / {total} ignored users ")
+        } else {
+            format!(" {total} ignored user(s) ")
+        };
+
         let list = List::new(items)
             .block(
                 Block::default()
-                    .title(Span::styled(
-                        format!(" {} ignored user(s) ", app.ignore_list.users.len()),
-                        Style::default().fg(ACCENT),
-                    ))
+                    .title(Span::styled(title, Style::default().fg(ACCENT)))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ACCENT)),
+                    .border_style(Style::default().fg(ACCENT))
+                    .padding(Padding::new(1, 1, 1, 1)),
             )
             .highlight_style(
                 Style::default()
@@ -230,7 +299,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                     .fg(ACCENT_DIM)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("▶ ");
+            .highlight_symbol("▌ ");
 
         let mut state = ListState::default();
         state.select(Some(app.ignore_list.selected));
@@ -270,12 +339,15 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     if app.ignore_list.confirm_unignore {
         draw_confirm(f, app);
     }
+
+    if app.ignore_list.filter.active {
+        crate::ui::draw_filter_popup(f, &app.ignore_list.filter, match_count, total, area);
+    }
 }
 
 fn draw_confirm(f: &mut Frame, app: &App) {
-    let user = app
-        .ignore_list
-        .users
+    let users = filtered_users(app);
+    let user = users
         .get(app.ignore_list.selected)
         .map(|s| s.as_str())
         .unwrap_or("this user");
@@ -327,6 +399,9 @@ fn draw_confirm(f: &mut Frame, app: &App) {
 }
 
 pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
+    if app.ignore_list.filter.active {
+        return filter_hint_spans(app.ignore_list.filter.column, IGNORE_COLS);
+    }
     if app.ignore_list.add_prompt.is_some() {
         vec![
             Span::styled("Type", Style::default().fg(ACCENT_DIM)),
@@ -344,6 +419,8 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
             Span::raw(" add  "),
             Span::styled("d", Style::default().fg(DANGER)),
             Span::raw(" unignore  "),
+            Span::styled("/", Style::default().fg(ACCENT)),
+            Span::raw(" filter  "),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::raw(" refresh  "),
             Span::styled(":", Style::default().fg(ACCENT)),
@@ -352,8 +429,4 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
             Span::raw(" home"),
         ]
     }
-}
-
-pub fn tool_name() -> &'static str {
-    "IgnoreList"
 }

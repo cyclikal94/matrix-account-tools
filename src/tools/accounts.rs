@@ -4,12 +4,23 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph},
 };
 
 use crate::app::{ActiveTool, App, LoginState, Screen};
 use crate::matrix::{AccountSummary, MatrixClient};
-use crate::tools::{ACCENT, ACCENT_DIM, BG3, BORDER, DANGER, FG, MUTED};
+use crate::tools::{ACCENT, ACCENT_DIM, BG3, BORDER, DANGER, FG, MUTED, FilterState, Filterable, filter_hint_spans};
+
+impl Filterable for AccountSummary {
+    fn filter_cols() -> &'static [&'static str] { &["all", "id", "server"] }
+    fn filter_value(&self, col: usize) -> String {
+        match col {
+            1 => self.user_id.clone(),
+            2 => self.homeserver.trim_end_matches('/').trim_start_matches("https://").trim_start_matches("http://").to_owned(),
+            _ => String::new(),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct AccountsToolState {
@@ -17,18 +28,70 @@ pub struct AccountsToolState {
     pub selected: usize,
     pub loading: bool,
     pub error: Option<String>,
+    pub filter: FilterState,
+}
+
+fn filtered_accounts(app: &App) -> Vec<&AccountSummary> {
+    app.accounts_tool.accounts.iter()
+        .filter(|a| app.accounts_tool.filter.matches_item(*a))
+        .collect()
 }
 
 pub async fn handle(app: &mut App, code: KeyCode) {
     if app.accounts_tool.loading {
         return;
     }
+
+    // Filter popup active — intercept keys.
+    if app.accounts_tool.filter.active {
+        match code {
+            KeyCode::Esc => app.accounts_tool.filter.clear(),
+            KeyCode::Enter => app.accounts_tool.filter.active = false,
+            KeyCode::Backspace => {
+                app.accounts_tool.filter.input.pop();
+                app.accounts_tool.selected = 0;
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let n = c.to_digit(10).unwrap() as usize;
+                if n < AccountSummary::filter_cols().len() {
+                    app.accounts_tool.filter.column = if n == 0 { None } else { Some(n) };
+                    app.accounts_tool.selected = 0;
+                }
+            }
+            KeyCode::Char(c) if !c.is_control() => {
+                app.accounts_tool.filter.input.push(c);
+                app.accounts_tool.selected = 0;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let len = filtered_accounts(app).len();
+                if app.accounts_tool.selected + 1 < len {
+                    app.accounts_tool.selected += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if app.accounts_tool.selected > 0 {
+                    app.accounts_tool.selected -= 1;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match code {
         KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-            app.active_tool = ActiveTool::Home;
+            if !app.accounts_tool.filter.input.is_empty() {
+                app.accounts_tool.filter.clear();
+            } else {
+                app.active_tool = ActiveTool::Home;
+            }
+        }
+        KeyCode::Char('/') => {
+            app.accounts_tool.filter.active = true;
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            if app.accounts_tool.selected + 1 < app.accounts_tool.accounts.len() {
+            let len = filtered_accounts(app).len();
+            if app.accounts_tool.selected + 1 < len {
                 app.accounts_tool.selected += 1;
             }
         }
@@ -51,10 +114,12 @@ pub async fn handle(app: &mut App, code: KeyCode) {
 }
 
 async fn do_switch_account(app: &mut App) {
-    let user_id = match app.accounts_tool.accounts.get(app.accounts_tool.selected) {
+    let accounts = filtered_accounts(app);
+    let user_id = match accounts.get(app.accounts_tool.selected) {
         Some(a) => a.user_id.clone(),
         None => return,
     };
+    drop(accounts);
     if app.current_user_id.as_deref() == Some(&user_id) {
         return;
     }
@@ -83,10 +148,12 @@ async fn do_switch_account(app: &mut App) {
 }
 
 async fn do_remove_account(app: &mut App) {
-    let user_id = match app.accounts_tool.accounts.get(app.accounts_tool.selected) {
+    let accounts = filtered_accounts(app);
+    let user_id = match accounts.get(app.accounts_tool.selected) {
         Some(a) => a.user_id.clone(),
         None => return,
     };
+    drop(accounts);
     app.accounts_tool.loading = true;
 
     match MatrixClient::remove_account(&user_id).await {
@@ -159,9 +226,25 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let items: Vec<ListItem> = app
+    let filtered: Vec<&AccountSummary> = app
         .accounts_tool
         .accounts
+        .iter()
+        .filter(|a| {
+            let hs = a
+                .homeserver
+                .trim_end_matches('/')
+                .trim_start_matches("https://")
+                .trim_start_matches("http://");
+            app.accounts_tool.filter.matches(&a.user_id)
+                || app.accounts_tool.filter.matches(hs)
+        })
+        .collect();
+
+    let total = app.accounts_tool.accounts.len();
+    let match_count = filtered.len();
+
+    let items: Vec<ListItem> = filtered
         .iter()
         .map(|a| {
             let hs = a
@@ -197,15 +280,19 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let title = if !app.accounts_tool.filter.input.is_empty() {
+        format!(" {match_count} / {total} accounts ")
+    } else {
+        format!(" {total} account(s) ")
+    };
+
     let list = List::new(items)
         .block(
             Block::default()
-                .title(Span::styled(
-                    format!(" {} account(s) ", app.accounts_tool.accounts.len()),
-                    Style::default().fg(MUTED),
-                ))
+                .title(Span::styled(title, Style::default().fg(MUTED)))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(BORDER)),
+                .border_style(Style::default().fg(BORDER))
+                .padding(Padding::new(1, 1, 1, 1)),
         )
         .highlight_style(
             Style::default()
@@ -230,9 +317,16 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     } else {
         f.render_stateful_widget(list, area, &mut state);
     }
+
+    if app.accounts_tool.filter.active {
+        crate::ui::draw_filter_popup(f, &app.accounts_tool.filter, match_count, total, area);
+    }
 }
 
-pub fn hint_spans() -> Vec<Span<'static>> {
+pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
+    if app.accounts_tool.filter.active {
+        return filter_hint_spans(app.accounts_tool.filter.column, AccountSummary::filter_cols());
+    }
     vec![
         Span::styled("j/k", Style::default().fg(ACCENT)),
         Span::raw(" navigate  "),
@@ -242,13 +336,11 @@ pub fn hint_spans() -> Vec<Span<'static>> {
         Span::raw(" add  "),
         Span::styled("d", Style::default().fg(DANGER)),
         Span::raw(" remove  "),
+        Span::styled("/", Style::default().fg(ACCENT)),
+        Span::raw(" filter  "),
         Span::styled(":", Style::default().fg(ACCENT)),
         Span::raw(" command  "),
         Span::styled("Esc/q", Style::default().fg(ACCENT)),
         Span::raw(" home"),
     ]
-}
-
-pub fn tool_name() -> &'static str {
-    "Accounts"
 }

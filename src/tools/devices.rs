@@ -4,14 +4,26 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap},
 };
 use tokio::sync::oneshot;
 
 use crate::app::{ActiveTool, App};
 use crate::matrix::DeviceInfo;
-use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS};
+use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS, FilterState, Filterable, filter_hint_spans};
 use crate::ui::centered_rect;
+
+impl Filterable for DeviceInfo {
+    fn filter_cols() -> &'static [&'static str] { &["all", "name", "id", "ip"] }
+    fn filter_value(&self, col: usize) -> String {
+        match col {
+            1 => self.display_name.clone().unwrap_or_default(),
+            2 => self.device_id.clone(),
+            3 => self.last_seen_ip.clone().unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -31,6 +43,13 @@ pub struct DevicesState {
     pub error: Option<String>,
     pub delete_dialog: Option<(String, DeleteDialogState)>,
     pub load_rx: Option<oneshot::Receiver<Result<Vec<DeviceInfo>, String>>>,
+    pub filter: FilterState,
+}
+
+fn filtered_devices(app: &App) -> Vec<&DeviceInfo> {
+    app.devices.devices.iter()
+        .filter(|d| app.devices.filter.matches_item(*d))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -86,12 +105,56 @@ pub async fn handle(app: &mut App, code: KeyCode) {
         return;
     }
 
+    // Filter popup active.
+    if app.devices.filter.active {
+        match code {
+            KeyCode::Esc => app.devices.filter.clear(),
+            KeyCode::Enter => app.devices.filter.active = false,
+            KeyCode::Backspace => {
+                app.devices.filter.input.pop();
+                app.devices.selected = 0;
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let n = c.to_digit(10).unwrap() as usize;
+                if n < DeviceInfo::filter_cols().len() {
+                    app.devices.filter.column = if n == 0 { None } else { Some(n) };
+                    app.devices.selected = 0;
+                }
+            }
+            KeyCode::Char(c) if !c.is_control() => {
+                app.devices.filter.input.push(c);
+                app.devices.selected = 0;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let len = filtered_devices(app).len();
+                if app.devices.selected + 1 < len {
+                    app.devices.selected += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if app.devices.selected > 0 {
+                    app.devices.selected -= 1;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match code {
         KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-            app.active_tool = ActiveTool::Home;
+            if !app.devices.filter.input.is_empty() {
+                app.devices.filter.clear();
+            } else {
+                app.active_tool = ActiveTool::Home;
+            }
+        }
+        KeyCode::Char('/') => {
+            app.devices.filter.active = true;
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            if app.devices.selected + 1 < app.devices.devices.len() {
+            let len = filtered_devices(app).len();
+            if app.devices.selected + 1 < len {
                 app.devices.selected += 1;
             }
         }
@@ -101,11 +164,13 @@ pub async fn handle(app: &mut App, code: KeyCode) {
             }
         }
         KeyCode::Char('d') | KeyCode::Delete => {
-            if let Some(dev) = app.devices.devices.get(app.devices.selected) {
+            let devs = filtered_devices(app);
+            if let Some(dev) = devs.get(app.devices.selected) {
                 if dev.is_current {
                     app.devices.error = Some("Cannot delete the current device.".to_owned());
                 } else {
                     let id = dev.device_id.clone();
+                    drop(devs);
                     app.devices.delete_dialog = Some((id, DeleteDialogState::Confirm));
                     app.devices.error = None;
                 }
@@ -193,9 +258,23 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let items: Vec<ListItem> = app
+    let filtered: Vec<&DeviceInfo> = app
         .devices
         .devices
+        .iter()
+        .filter(|d| {
+            app.devices.filter.matches(d.display_name.as_deref().unwrap_or(""))
+                || app.devices.filter.matches(&d.device_id)
+                || d.last_seen_ip
+                    .as_deref()
+                    .map_or(false, |ip| app.devices.filter.matches(ip))
+        })
+        .collect();
+
+    let total = app.devices.devices.len();
+    let match_count = filtered.len();
+
+    let items: Vec<ListItem> = filtered
         .iter()
         .map(|d| {
             let name = d
@@ -239,15 +318,19 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let title = if !app.devices.filter.input.is_empty() {
+        format!(" {match_count} / {total} device(s) ")
+    } else {
+        format!(" {total} device(s) ")
+    };
+
     let list = List::new(items)
         .block(
             Block::default()
-                .title(Span::styled(
-                    format!(" {} device(s) ", app.devices.devices.len()),
-                    Style::default().fg(ACCENT),
-                ))
+                .title(Span::styled(title, Style::default().fg(ACCENT)))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ACCENT)),
+                .border_style(Style::default().fg(ACCENT))
+                .padding(Padding::new(1, 1, 1, 1)),
         )
         .highlight_style(
             Style::default()
@@ -255,7 +338,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 .fg(ACCENT_DIM)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("▶ ");
+        .highlight_symbol("▌ ");
 
     let mut state = ListState::default();
     state.select(Some(app.devices.selected));
@@ -275,6 +358,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     if app.devices.delete_dialog.is_some() {
         draw_delete_dialog(f, app);
+    }
+
+    if app.devices.filter.active {
+        crate::ui::draw_filter_popup(f, &app.devices.filter, match_count, total, area);
     }
 }
 
@@ -364,6 +451,9 @@ fn draw_delete_dialog(f: &mut Frame, app: &App) {
 }
 
 pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
+    if app.devices.filter.active {
+        return filter_hint_spans(app.devices.filter.column, DeviceInfo::filter_cols());
+    }
     if app.devices.delete_dialog.is_some() {
         vec![]
     } else {
@@ -372,6 +462,8 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
             Span::raw(" navigate  "),
             Span::styled("d", Style::default().fg(DANGER)),
             Span::raw(" sign out  "),
+            Span::styled("/", Style::default().fg(ACCENT)),
+            Span::raw(" filter  "),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::raw(" refresh  "),
             Span::styled(":", Style::default().fg(ACCENT)),
@@ -380,8 +472,4 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
             Span::raw(" home"),
         ]
     }
-}
-
-pub fn tool_name() -> &'static str {
-    "Devices"
 }
