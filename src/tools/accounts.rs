@@ -1258,7 +1258,7 @@ fn draw_tab_section(f: &mut Frame, app: &App, area: Rect) {
                 .fg(if devices_active { ACCENT } else { MUTED })
                 .add_modifier(if devices_active { Modifier::BOLD } else { Modifier::empty() }),
         ),
-        Span::styled("  ·  ", Style::default().fg(MUTED2)),
+        Span::styled(" ─┬─ ", Style::default().fg(border_color)),
         Span::styled(
             ignored_label,
             Style::default()
