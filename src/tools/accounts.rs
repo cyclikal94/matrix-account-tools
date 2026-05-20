@@ -1,15 +1,16 @@
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph},
+    widgets::ListItem,
 };
 
 use crate::app::{ActiveTool, App, LoginState, Screen};
 use crate::matrix::{AccountSummary, MatrixClient};
-use crate::tools::{ACCENT, ACCENT_DIM, BG3, BORDER, DANGER, FG, MUTED, FilterState, Filterable, filter_hint_spans};
+use crate::tools::{ACCENT, BORDER, FG, MUTED, FilterState, Filterable, filter_hint_spans};
+use crate::tools::common::{Cmd, draw_list_block, handle_filter_keys, hint_spans_from_cmds, nav_down, nav_up};
 
 impl Filterable for AccountSummary {
     fn filter_cols() -> &'static [&'static str] { &["all", "id", "server"] }
@@ -21,6 +22,16 @@ impl Filterable for AccountSummary {
         }
     }
 }
+
+pub const CMDS: &[Cmd] = &[
+    Cmd::new("j/k",    "navigate"),
+    Cmd::new("Enter",  "switch"),
+    Cmd::new("a",      "add"),
+    Cmd::danger("d",   "remove"),
+    Cmd::new("/",      "filter"),
+    Cmd::new(":",      "command"),
+    Cmd::new("Esc/q",  "home"),
+];
 
 #[derive(Debug, Default)]
 pub struct AccountsToolState {
@@ -42,39 +53,15 @@ pub async fn handle(app: &mut App, code: KeyCode) {
         return;
     }
 
-    // Filter popup active — intercept keys.
     if app.accounts_tool.filter.active {
-        match code {
-            KeyCode::Esc => app.accounts_tool.filter.clear(),
-            KeyCode::Enter => app.accounts_tool.filter.active = false,
-            KeyCode::Backspace => {
-                app.accounts_tool.filter.input.pop();
-                app.accounts_tool.selected = 0;
-            }
-            KeyCode::Char(c) if c.is_ascii_digit() => {
-                let n = c.to_digit(10).unwrap() as usize;
-                if n < AccountSummary::filter_cols().len() {
-                    app.accounts_tool.filter.column = if n == 0 { None } else { Some(n) };
-                    app.accounts_tool.selected = 0;
-                }
-            }
-            KeyCode::Char(c) if !c.is_control() => {
-                app.accounts_tool.filter.input.push(c);
-                app.accounts_tool.selected = 0;
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                let len = filtered_accounts(app).len();
-                if app.accounts_tool.selected + 1 < len {
-                    app.accounts_tool.selected += 1;
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if app.accounts_tool.selected > 0 {
-                    app.accounts_tool.selected -= 1;
-                }
-            }
-            _ => {}
-        }
+        let filtered_len = filtered_accounts(app).len();
+        handle_filter_keys(
+            &mut app.accounts_tool.filter,
+            &mut app.accounts_tool.selected,
+            filtered_len,
+            AccountSummary::filter_cols().len(),
+            code,
+        );
         return;
     }
 
@@ -91,21 +78,12 @@ pub async fn handle(app: &mut App, code: KeyCode) {
         }
         KeyCode::Char('j') | KeyCode::Down => {
             let len = filtered_accounts(app).len();
-            if app.accounts_tool.selected + 1 < len {
-                app.accounts_tool.selected += 1;
-            }
+            nav_down(&mut app.accounts_tool.selected, len);
         }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.accounts_tool.selected > 0 {
-                app.accounts_tool.selected -= 1;
-            }
-        }
+        KeyCode::Char('k') | KeyCode::Up => nav_up(&mut app.accounts_tool.selected),
         KeyCode::Enter => do_switch_account(app).await,
         KeyCode::Char('a') | KeyCode::Char('A') => {
-            app.login = LoginState {
-                can_go_back: true,
-                ..LoginState::default()
-            };
+            app.login = LoginState { can_go_back: true, ..LoginState::default() };
             app.screen = Screen::Login;
         }
         KeyCode::Char('d') | KeyCode::Delete => do_remove_account(app).await,
@@ -206,58 +184,26 @@ pub async fn do_load_accounts(app: &mut App) {
 }
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
-    if app.accounts_tool.loading {
-        f.render_widget(
-            Paragraph::new("Loading accounts…")
-                .style(Style::default().fg(ACCENT).add_modifier(Modifier::ITALIC))
-                .alignment(Alignment::Center),
-            area,
-        );
-        return;
-    }
-
-    if app.accounts_tool.accounts.is_empty() {
-        f.render_widget(
-            Paragraph::new("No accounts saved. Press 'a' to add one.")
-                .style(Style::default().fg(MUTED))
-                .alignment(Alignment::Center),
-            area,
-        );
-        return;
-    }
-
-    let filtered: Vec<&AccountSummary> = app
-        .accounts_tool
-        .accounts
-        .iter()
-        .filter(|a| {
-            let hs = a
-                .homeserver
+    draw_list_block(
+        f,
+        "Accounts",
+        &app.accounts_tool.accounts,
+        app.accounts_tool.selected,
+        &app.accounts_tool.filter,
+        app.accounts_tool.loading,
+        true,
+        &app.accounts_tool.error,
+        area,
+        "Loading accounts…",
+        "No accounts saved. Press 'a' to add one.",
+        |a: &AccountSummary| {
+            let hs = a.homeserver
                 .trim_end_matches('/')
                 .trim_start_matches("https://")
                 .trim_start_matches("http://");
-            app.accounts_tool.filter.matches(&a.user_id)
-                || app.accounts_tool.filter.matches(hs)
-        })
-        .collect();
-
-    let total = app.accounts_tool.accounts.len();
-    let match_count = filtered.len();
-
-    let items: Vec<ListItem> = filtered
-        .iter()
-        .map(|a| {
-            let hs = a
-                .homeserver
-                .trim_end_matches('/')
-                .trim_start_matches("https://")
-                .trim_start_matches("http://");
-            let avatar_char = a
-                .user_id
+            let avatar_char = a.user_id
                 .trim_start_matches('@')
-                .chars()
-                .next()
-                .unwrap_or('?')
+                .chars().next().unwrap_or('?')
                 .to_ascii_uppercase();
             let active_badge = if a.is_current {
                 Span::styled("  ● active", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
@@ -265,7 +211,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw("")
             };
             ListItem::new(Line::from(vec![
-                Span::styled("[", Style::default().fg(BORDER)),
+                Span::styled("[",  Style::default().fg(BORDER)),
                 Span::styled(avatar_char.to_string(), Style::default().fg(MUTED)),
                 Span::styled("] ", Style::default().fg(BORDER)),
                 Span::styled(
@@ -277,46 +223,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(format!("  {hs}"), Style::default().fg(MUTED)),
                 active_badge,
             ]))
-        })
-        .collect();
-
-    let title = if !app.accounts_tool.filter.input.is_empty() {
-        format!(" Accounts ({match_count}/{total}) ")
-    } else {
-        format!(" Accounts ({total}) ")
-    };
-
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .title(Span::styled(title, Style::default().fg(MUTED)))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(BORDER))
-                .padding(Padding::new(1, 1, 1, 1)),
-        )
-        .highlight_style(
-            Style::default()
-                .bg(BG3)
-                .fg(ACCENT_DIM)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▌ ");
-
-    let mut state = ListState::default();
-    state.select(Some(app.accounts_tool.selected));
-
-    if let Some(err) = &app.accounts_tool.error {
-        let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
-        f.render_stateful_widget(list, chunks[0], &mut state);
-        f.render_widget(
-            Paragraph::new(err.as_str())
-                .style(Style::default().fg(DANGER))
-                .alignment(Alignment::Center),
-            chunks[1],
-        );
-    } else {
-        f.render_stateful_widget(list, area, &mut state);
-    }
+        },
+    );
 
     if app.accounts_tool.filter.active {
         crate::ui::draw_filter_popup(f, &app.accounts_tool.filter, area);
@@ -327,20 +235,5 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
     if app.accounts_tool.filter.active {
         return filter_hint_spans(app.accounts_tool.filter.column, AccountSummary::filter_cols());
     }
-    vec![
-        Span::styled("j/k", Style::default().fg(ACCENT)),
-        Span::raw(" navigate  "),
-        Span::styled("Enter", Style::default().fg(ACCENT)),
-        Span::raw(" switch  "),
-        Span::styled("a", Style::default().fg(ACCENT)),
-        Span::raw(" add  "),
-        Span::styled("d", Style::default().fg(DANGER)),
-        Span::raw(" remove  "),
-        Span::styled("/", Style::default().fg(ACCENT)),
-        Span::raw(" filter  "),
-        Span::styled(":", Style::default().fg(ACCENT)),
-        Span::raw(" command  "),
-        Span::styled("Esc/q", Style::default().fg(ACCENT)),
-        Span::raw(" home"),
-    ]
+    hint_spans_from_cmds(CMDS)
 }

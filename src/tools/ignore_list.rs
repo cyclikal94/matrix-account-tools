@@ -10,9 +10,26 @@ use tokio::sync::oneshot;
 
 use crate::app::{ActiveTool, App};
 use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS, FilterState, filter_hint_spans};
+use crate::tools::common::{Cmd, handle_filter_keys, hint_spans_from_cmds, nav_down, nav_up};
 use crate::ui::centered_rect;
 
 const IGNORE_COLS: &[&str] = &["all"];
+
+pub const CMDS: &[Cmd] = &[
+    Cmd::new("j/k",    "navigate"),
+    Cmd::new("a",      "add"),
+    Cmd::danger("d",   "unignore"),
+    Cmd::new("/",      "filter"),
+    Cmd::new("r",      "refresh"),
+    Cmd::new(":",      "command"),
+    Cmd::new("Esc/q",  "home"),
+];
+
+pub const CMDS_ADD_PROMPT: &[Cmd] = &[
+    Cmd::new("Type",     "user ID"),
+    Cmd::success("Enter","submit"),
+    Cmd::new("Esc",      "cancel"),
+];
 
 // ---------------------------------------------------------------------------
 // State
@@ -24,7 +41,6 @@ pub struct IgnoreListState {
     pub selected: usize,
     pub loading: bool,
     pub error: Option<String>,
-    /// Some(input) when the add-user prompt is active.
     pub add_prompt: Option<String>,
     pub confirm_unignore: bool,
     pub load_rx: Option<oneshot::Receiver<Result<Vec<String>, String>>>,
@@ -91,30 +107,14 @@ pub async fn handle(app: &mut App, code: KeyCode) {
 
     // Filter popup active.
     if app.ignore_list.filter.active {
-        match code {
-            KeyCode::Esc => app.ignore_list.filter.clear(),
-            KeyCode::Enter => app.ignore_list.filter.active = false,
-            KeyCode::Backspace => {
-                app.ignore_list.filter.input.pop();
-                app.ignore_list.selected = 0;
-            }
-            KeyCode::Char(c) if !c.is_control() => {
-                app.ignore_list.filter.input.push(c);
-                app.ignore_list.selected = 0;
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                let len = filtered_users(app).len();
-                if app.ignore_list.selected + 1 < len {
-                    app.ignore_list.selected += 1;
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if app.ignore_list.selected > 0 {
-                    app.ignore_list.selected -= 1;
-                }
-            }
-            _ => {}
-        }
+        let filtered_len = filtered_users(app).len();
+        handle_filter_keys(
+            &mut app.ignore_list.filter,
+            &mut app.ignore_list.selected,
+            filtered_len,
+            IGNORE_COLS.len(),
+            code,
+        );
         return;
     }
 
@@ -131,15 +131,9 @@ pub async fn handle(app: &mut App, code: KeyCode) {
         }
         KeyCode::Char('j') | KeyCode::Down => {
             let len = filtered_users(app).len();
-            if app.ignore_list.selected + 1 < len {
-                app.ignore_list.selected += 1;
-            }
+            nav_down(&mut app.ignore_list.selected, len);
         }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.ignore_list.selected > 0 {
-                app.ignore_list.selected -= 1;
-            }
-        }
+        KeyCode::Char('k') | KeyCode::Up => nav_up(&mut app.ignore_list.selected),
         KeyCode::Char('a') | KeyCode::Char('A') => {
             app.ignore_list.add_prompt = Some(String::new());
             app.ignore_list.error = None;
@@ -232,7 +226,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // Area: list + optional add prompt row + optional error row.
     let has_prompt = app.ignore_list.add_prompt.is_some();
     let has_error = app.ignore_list.error.is_some();
     let extra = has_prompt as u16 + has_error as u16;
@@ -403,30 +396,7 @@ pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
         return filter_hint_spans(app.ignore_list.filter.column, IGNORE_COLS);
     }
     if app.ignore_list.add_prompt.is_some() {
-        vec![
-            Span::styled("Type", Style::default().fg(ACCENT_DIM)),
-            Span::raw(" user ID  "),
-            Span::styled("Enter", Style::default().fg(SUCCESS)),
-            Span::raw(" submit  "),
-            Span::styled("Esc", Style::default().fg(ACCENT)),
-            Span::raw(" cancel"),
-        ]
-    } else {
-        vec![
-            Span::styled("j/k", Style::default().fg(ACCENT)),
-            Span::raw(" navigate  "),
-            Span::styled("a", Style::default().fg(ACCENT)),
-            Span::raw(" add  "),
-            Span::styled("d", Style::default().fg(DANGER)),
-            Span::raw(" unignore  "),
-            Span::styled("/", Style::default().fg(ACCENT)),
-            Span::raw(" filter  "),
-            Span::styled("r", Style::default().fg(ACCENT)),
-            Span::raw(" refresh  "),
-            Span::styled(":", Style::default().fg(ACCENT)),
-            Span::raw(" command  "),
-            Span::styled("Esc/q", Style::default().fg(ACCENT)),
-            Span::raw(" home"),
-        ]
+        return hint_spans_from_cmds(CMDS_ADD_PROMPT);
     }
+    hint_spans_from_cmds(CMDS)
 }

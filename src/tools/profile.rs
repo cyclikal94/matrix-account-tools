@@ -12,6 +12,20 @@ use tokio::sync::oneshot;
 
 use crate::app::{ActiveTool, App};
 use crate::tools::{ACCENT, ACCENT_DIM, DANGER, MUTED, SUCCESS};
+use crate::tools::common::{Cmd, hint_spans_from_cmds};
+
+pub const CMDS: &[Cmd] = &[
+    Cmd::new("Tab/j/k", "switch"),
+    Cmd::new("e/Enter",  "edit"),
+    Cmd::new("r",        "reload"),
+    Cmd::new(":",        "command"),
+    Cmd::new("Esc/q",    "home"),
+];
+
+pub const CMDS_EDITING: &[Cmd] = &[
+    Cmd::success("Enter", "save"),
+    Cmd::new("Esc",       "discard"),
+];
 
 // ---------------------------------------------------------------------------
 // State
@@ -320,25 +334,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
 pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
     if app.profile.is_editing() {
-        vec![
-            Span::styled("Enter", Style::default().fg(SUCCESS)),
-            Span::raw(" save  "),
-            Span::styled("Esc", Style::default().fg(ACCENT)),
-            Span::raw(" discard"),
-        ]
+        hint_spans_from_cmds(CMDS_EDITING)
     } else {
-        vec![
-            Span::styled("Tab/j/k", Style::default().fg(ACCENT)),
-            Span::raw(" switch  "),
-            Span::styled("e/Enter", Style::default().fg(ACCENT)),
-            Span::raw(" edit  "),
-            Span::styled("r", Style::default().fg(ACCENT)),
-            Span::raw(" reload  "),
-            Span::styled(":", Style::default().fg(ACCENT)),
-            Span::raw(" command  "),
-            Span::styled("Esc/q", Style::default().fg(ACCENT)),
-            Span::raw(" home"),
-        ]
+        hint_spans_from_cmds(CMDS)
     }
 }
 

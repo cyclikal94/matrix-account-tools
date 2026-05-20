@@ -14,6 +14,7 @@ use super::{ACCENT, ACCENT_DIM, BG3, BORDER, DANGER, MUTED, FilterState, Filtera
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum CmdColor {
     Accent,
     Danger,
@@ -53,6 +54,7 @@ impl Cmd {
     pub const fn success(key: &'static str, desc: &'static str) -> Self {
         Self { key, desc, color: CmdColor::Success }
     }
+    #[allow(dead_code)]
     pub const fn muted(key: &'static str, desc: &'static str) -> Self {
         Self { key, desc, color: CmdColor::Muted }
     }

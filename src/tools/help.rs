@@ -7,6 +7,7 @@ use ratatui::{
 
 use crate::app::{ActiveTool, App};
 use crate::tools::{ACCENT, ACCENT_DIM, BG2, BORDER, MUTED};
+use crate::tools::common::Cmd;
 use crate::ui::centered_rect;
 
 pub fn draw_overlay(f: &mut Frame, app: &App) {
@@ -79,6 +80,16 @@ fn tool_help_lines(app: &App) -> Vec<Line<'static>> {
             Span::styled(format!("    {key:<18}"), Style::default().fg(ACCENT_DIM)),
             Span::styled(desc, Style::default().fg(ratatui::style::Color::Rgb(237, 239, 242))),
         ])
+    };
+    let from_cmds = |title: &'static str, cmds: &[Cmd]| -> Vec<Line<'static>> {
+        let mut lines = vec![section(title)];
+        for cmd in cmds {
+            lines.push(Line::from(vec![
+                Span::styled(format!("    {:<18}", cmd.key), Style::default().fg(ACCENT_DIM)),
+                Span::styled(cmd.desc, Style::default().fg(ratatui::style::Color::Rgb(237, 239, 242))),
+            ]));
+        }
+        lines
     };
 
     match app.active_tool {
@@ -166,34 +177,14 @@ fn tool_help_lines(app: &App) -> Vec<Line<'static>> {
             }
             lines
         }
-        ActiveTool::Accounts => vec![
-            section("Accounts"),
-            row("j / k  ↑↓", "Navigate"),
-            row("Enter", "Switch to account"),
-            row("a", "Add account (login)"),
-            row("d", "Remove account"),
-            row("Esc / q", "Back to home"),
-        ],
-        ActiveTool::IgnoreList => vec![
-            section("Ignore List"),
-            row("j / k  ↑↓", "Navigate"),
-            row("a", "Add user to ignore list"),
-            row("d", "Unignore selected user"),
-            row("Esc / q", "Back to home"),
-        ],
-        ActiveTool::Profile => vec![
-            section("Profile"),
-            row("j / k / Tab", "Switch field"),
-            row("e / Enter", "Edit focused field"),
-            row("Enter  (editing)", "Save field"),
-            row("Esc  (editing)", "Discard changes"),
-            row("Esc / q", "Back to home"),
-        ],
-        ActiveTool::Devices => vec![
-            section("Devices"),
-            row("j / k  ↑↓", "Navigate"),
-            row("d / Delete", "Sign out device"),
-            row("Esc / q", "Back to home"),
-        ],
+        ActiveTool::Accounts  => from_cmds("Accounts",    crate::tools::accounts::CMDS),
+        ActiveTool::IgnoreList => from_cmds("Ignore List", crate::tools::ignore_list::CMDS),
+        ActiveTool::Devices    => from_cmds("Devices",     crate::tools::devices::CMDS),
+        ActiveTool::Profile => {
+            let mut lines = from_cmds("Profile", crate::tools::profile::CMDS);
+            lines.push(Line::from(""));
+            lines.extend(from_cmds("While Editing", crate::tools::profile::CMDS_EDITING));
+            lines
+        }
     }
 }

@@ -992,8 +992,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     draw_right_panel(f, app, cols[2]);
 
     if app.rooms_tool.filter.active {
-        let total = app.rooms_tool.rooms.len();
-        let match_count = app.rooms_tool.filtered_rooms().len();
         crate::ui::draw_filter_popup(f, &app.rooms_tool.filter, cols[0]);
     }
 }
@@ -1621,7 +1619,7 @@ fn draw_members_block(f: &mut Frame, app: &App, area: Rect) {
 
     // Build filtered member list.
     let filtered_members = filtered_members_vec(ms);
-    let total_members = ms.members.len();
+    let _total_members = ms.members.len();
     let filtered_member_count = filtered_members.len();
 
     // Reserve bottom rows for pl_edit and error.
