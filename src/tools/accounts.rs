@@ -16,7 +16,10 @@ use crate::tools::{
     ACCENT, ACCENT_DIM, BG, BG3, BORDER, DANGER, FG, FG2, MUTED, MUTED2, SUCCESS,
     FilterState, Filterable, filter_hint_spans,
 };
-use crate::tools::common::{Cmd, handle_filter_keys, hint_spans_from_cmds, nav_down, nav_up};
+use crate::tools::common::{
+    Cmd, draw_confirm_popup, handle_confirm_key, handle_filter_keys,
+    hint_spans_from_cmds, nav_down, nav_up,
+};
 use crate::ui::centered_rect;
 
 // ---------------------------------------------------------------------------
@@ -576,38 +579,28 @@ async fn handle_ignored_add_prompt(app: &mut App, code: KeyCode) {
 }
 
 async fn handle_ignored_confirm(app: &mut App, code: KeyCode) {
-    match code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            app.accounts_tool.ignored_confirm_unignore = false;
-            let users = filtered_ignored(app);
-            let user_id = match users.get(app.accounts_tool.ignored_selected) {
-                Some(u) => (*u).clone(),
-                None => return,
-            };
-            drop(users);
-            if let Some(client) = &app.matrix {
-                match client.unignore_user(&user_id).await {
-                    Ok(()) => app.accounts_tool.ignored_error = None,
-                    Err(e) => app.accounts_tool.ignored_error = Some(format!("{e}")),
-                }
+    app.accounts_tool.ignored_confirm_unignore = false;
+    if handle_confirm_key(code) {
+        let users = filtered_ignored(app);
+        let user_id = match users.get(app.accounts_tool.ignored_selected) {
+            Some(u) => (*u).clone(),
+            None => return,
+        };
+        drop(users);
+        if let Some(client) = &app.matrix {
+            match client.unignore_user(&user_id).await {
+                Ok(()) => app.accounts_tool.ignored_error = None,
+                Err(e) => app.accounts_tool.ignored_error = Some(format!("{e}")),
             }
-            start_ignored_load(app);
         }
-        _ => {
-            app.accounts_tool.ignored_confirm_unignore = false;
-        }
+        start_ignored_load(app);
     }
 }
 
 async fn handle_remove_confirm(app: &mut App, code: KeyCode) {
-    match code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            app.accounts_tool.confirm_remove = false;
-            do_remove_account(app).await;
-        }
-        _ => {
-            app.accounts_tool.confirm_remove = false;
-        }
+    app.accounts_tool.confirm_remove = false;
+    if handle_confirm_key(code) {
+        do_remove_account(app).await;
     }
 }
 
@@ -1557,90 +1550,20 @@ fn draw_device_delete_dialog(f: &mut Frame, app: &App) {
 
 fn draw_unignore_confirm(f: &mut Frame, app: &App) {
     let users = filtered_ignored(app);
-    let user = users
-        .get(app.accounts_tool.ignored_selected)
-        .map(|s| s.as_str())
-        .unwrap_or("this user");
-
-    let area = f.area();
-    let popup = centered_rect(54, 7, area);
-    f.render_widget(Clear, popup);
-
-    f.render_widget(
-        Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("  Unignore "),
-                Span::styled(
-                    user.to_owned(),
-                    Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("?"),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Enter/y", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
-                Span::raw("  confirm    "),
-                Span::styled("any other key", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
-                Span::raw("  cancel"),
-            ]),
-        ])
-        .block(
-            Block::default()
-                .title(Span::styled(
-                    " Confirm ",
-                    Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
-                ))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(DANGER))
-                .style(Style::default().bg(ratatui::style::Color::Rgb(25, 15, 15))),
-        )
-        .wrap(Wrap { trim: false }),
-        popup,
+    let subject = format!(
+        "Unignore {}?",
+        users.get(app.accounts_tool.ignored_selected).map(|s| s.as_str()).unwrap_or("this user")
     );
+    draw_confirm_popup(f, "Confirm", &subject);
 }
 
 fn draw_remove_confirm(f: &mut Frame, app: &App) {
     let accounts = filtered_accounts(app);
-    let user_id = accounts
-        .get(app.accounts_tool.selected)
-        .map(|a| a.user_id.as_str())
-        .unwrap_or("this account")
-        .to_owned();
-
-    let area = f.area();
-    let popup = centered_rect(58, 7, area);
-    f.render_widget(Clear, popup);
-
-    f.render_widget(
-        Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("  Remove account "),
-                Span::styled(user_id, Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD)),
-                Span::raw("?"),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Enter/y", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
-                Span::raw("  confirm    "),
-                Span::styled("any other key", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
-                Span::raw("  cancel"),
-            ]),
-        ])
-        .block(
-            Block::default()
-                .title(Span::styled(
-                    " Remove Account ",
-                    Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
-                ))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(DANGER))
-                .style(Style::default().bg(ratatui::style::Color::Rgb(25, 15, 15))),
-        )
-        .wrap(Wrap { trim: false }),
-        popup,
+    let subject = format!(
+        "Remove account {}?",
+        accounts.get(app.accounts_tool.selected).map(|a| a.user_id.as_str()).unwrap_or("this account")
     );
+    draw_confirm_popup(f, "Remove Account", &subject);
 }
 
 // ---------------------------------------------------------------------------

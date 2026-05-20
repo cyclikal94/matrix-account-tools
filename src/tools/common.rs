@@ -3,11 +3,11 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Span,
-    widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap},
 };
 
-use super::{ACCENT, ACCENT_DIM, BG3, BORDER, DANGER, MUTED, FilterState, Filterable};
+use super::{ACCENT, ACCENT_DIM, BG3, BORDER, DANGER, MUTED, SUCCESS, FilterState, Filterable};
 
 // ---------------------------------------------------------------------------
 // Command table types
@@ -226,21 +226,23 @@ pub fn draw_list_block<T, F>(
     let border_color = panel_border_color(focused);
     let title_color = panel_title_color(focused);
 
-    let list = List::new(list_items)
-        .block(
-            Block::default()
-                .title(Span::styled(title, Style::default().fg(title_color)))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color))
-                .padding(Padding::new(1, 1, 1, 1)),
-        )
-        .highlight_style(
-            Style::default()
-                .bg(BG3)
-                .fg(ACCENT_DIM)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▌ ");
+    let block = Block::default()
+        .title(Span::styled(title, Style::default().fg(title_color)))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .padding(Padding::new(1, 1, 1, 1));
+
+    // Always pass a selected index so ratatui reserves symbol width for every row,
+    // keeping indentation stable regardless of focus. Only show the accent bar and
+    // highlight background when the panel is actually focused.
+    let list = if focused {
+        List::new(list_items)
+            .block(block)
+            .highlight_style(Style::default().bg(BG3).fg(ACCENT_DIM).add_modifier(Modifier::BOLD))
+            .highlight_symbol("▌ ")
+    } else {
+        List::new(list_items).block(block).highlight_symbol("  ")
+    };
 
     let mut state = ListState::default();
     state.select(Some(selected));
@@ -264,6 +266,56 @@ pub fn draw_list_block<T, F>(
             f.render_stateful_widget(list, area, &mut state);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Confirmation popup
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if the key is a standard "yes" confirmation (y / Y / Enter).
+pub fn handle_confirm_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter)
+}
+
+/// Draw a DANGER-styled confirmation popup centered on the frame.
+///
+/// `title`   — shown in the border, e.g. `"Remove Account"`
+/// `subject` — shown in the body, e.g. `"Remove @foo:matrix.org?"`
+///
+/// The popup always shows `Enter / y  confirm    any other key  cancel`.
+/// Callers handle the key response with `handle_confirm_key`.
+pub fn draw_confirm_popup(f: &mut Frame, title: &str, subject: &str) {
+    use crate::ui::centered_rect;
+    let popup = centered_rect(58, 7, f.area());
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(subject.to_owned(), Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Enter / y", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
+                Span::raw("  confirm    "),
+                Span::styled("any other key", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
+                Span::raw("  cancel"),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .title(Span::styled(
+                    format!(" {title} "),
+                    Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(DANGER))
+                .style(Style::default().bg(Color::Rgb(25, 15, 15))),
+        )
+        .wrap(Wrap { trim: false }),
+        popup,
+    );
 }
 
 // ---------------------------------------------------------------------------
