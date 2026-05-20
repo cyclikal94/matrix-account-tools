@@ -44,6 +44,19 @@ On macOS, the binary is unsigned. If Gatekeeper blocks it, run once with:
 xattr -d com.apple.quarantine matrix-account-tools-aarch64-macos
 ```
 
+## Data storage
+
+Sessions and room cache are stored in the platform config directory:
+
+| Platform | Path |
+|---|---|
+| macOS | `~/Library/Application Support/matrix-account-tools/` |
+| Linux | `~/.config/matrix-account-tools/` |
+| Windows | `%APPDATA%\matrix-account-tools\` |
+
+- `accounts.json` — saved accounts (homeserver, session tokens)
+- `stores/<user>_at_<homeserver>/` — per-account SQLite database (room cache, crypto store)
+
 ## Building from source
 
 ```
