@@ -1121,17 +1121,9 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     if cw < 4 || inner.height < 4 { return; }
 
     let user_id = app.current_user_id.as_deref().unwrap_or("");
-    let homeserver = app.accounts_tool.accounts
-        .iter()
-        .find(|a| Some(a.user_id.as_str()) == app.current_user_id.as_deref())
-        .map(|a| a.homeserver
-            .trim_end_matches('/')
-            .trim_start_matches("https://")
-            .trim_start_matches("http://")
-            .to_owned())
-        .unwrap_or_default();
+    let display_name = app.accounts_tool.display_name.as_deref().unwrap_or(user_id);
 
-    let avatar_letter = user_id
+    let avatar_letter = display_name
         .trim_start_matches('@')
         .chars()
         .next()
@@ -1140,8 +1132,8 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
 
     let chunks = Layout::vertical([
         Constraint::Length(1), // [0] padding
-        Constraint::Length(1), // [1] avatar + user_id
-        Constraint::Length(1), // [2] homeserver
+        Constraint::Length(1), // [1] avatar + display name
+        Constraint::Length(1), // [2] mxid
         Constraint::Length(1), // [3] blank
         Constraint::Length(1), // [4] DISPLAY NAME label
         Constraint::Length(1), // [5] display name value
@@ -1152,7 +1144,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     ])
     .split(inner);
 
-    // [1] Avatar + user_id
+    // [1] Avatar + display name
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -1160,14 +1152,14 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(BG).bg(ACCENT).add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
-            Span::styled(user_id.to_owned(), Style::default().fg(FG).add_modifier(Modifier::BOLD)),
+            Span::styled(display_name.to_owned(), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
         ])),
         Rect::new(cx, chunks[1].y, cw, 1),
     );
 
-    // [2] Homeserver
+    // [2] MXID
     f.render_widget(
-        Paragraph::new(Span::styled(homeserver, Style::default().fg(MUTED))),
+        Paragraph::new(Span::styled(user_id.to_owned(), Style::default().fg(MUTED))),
         Rect::new(cx + 5, chunks[2].y, cw.saturating_sub(5), 1),
     );
 
