@@ -1345,6 +1345,11 @@ fn draw_devices_list(f: &mut Frame, app: &App, area: Rect) {
             .map(|d| d.device_id.chars().count())
             .max()
             .unwrap_or(0);
+        let ts_col_w = filtered.iter()
+            .filter_map(|d| d.last_seen_ts.as_deref())
+            .map(|ts| ts.chars().count())
+            .max()
+            .unwrap_or(0);
 
         let items: Vec<ListItem> = filtered
             .iter()
@@ -1355,9 +1360,9 @@ fn draw_devices_list(f: &mut Frame, app: &App, area: Rect) {
                     if d.is_current { (" ✓", 2) } else { ("", 0) };
                 let pad = name_col_w.saturating_sub(name_len + marker_len);
                 let last_info = match (&d.last_seen_ts, &d.last_seen_ip) {
-                    (Some(ts), Some(ip)) => format!("  {ts}  {ip}"),
-                    (Some(ts), None)     => format!("  {ts}"),
-                    (None,     Some(ip)) => format!("  {ip}"),
+                    (Some(ts), Some(ip)) => format!("  {ts:<ts_col_w$}  {ip}"),
+                    (Some(ts), None)     => format!("  {ts:<ts_col_w$}"),
+                    (None,     Some(ip)) => format!("  {:<ts_col_w$}  {ip}", ""),
                     (None,     None)     => String::new(),
                 };
                 ListItem::new(Line::from(vec![
