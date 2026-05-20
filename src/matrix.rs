@@ -209,7 +209,7 @@ impl MatrixClient {
         );
 
         let client = Client::builder()
-            .homeserver_url(&homeserver)
+            .server_name_or_homeserver_url(&homeserver)
             .sqlite_store(&db_path, Some(&passphrase))
             .build()
             .await
@@ -225,16 +225,16 @@ impl MatrixClient {
 
     /// Login with a new account, persist it, return a ready client.
     pub async fn login(homeserver: &str, username: &str, password: &str) -> Result<Self> {
-        let homeserver_url = url::Url::parse(homeserver)
-            .with_context(|| format!("Invalid homeserver URL: {homeserver}"))?;
-
         let store_dir = Self::store_dir(homeserver, username)?;
         fs::create_dir_all(&store_dir).await?;
 
         let passphrase = format!("{homeserver}:{username}");
 
+        // server_name_or_homeserver_url performs .well-known discovery when given
+        // a bare server name (e.g. "cyclikal.dev"), and falls back to direct URL
+        // when given a full URL (e.g. "https://matrix.example.com").
         let client = Client::builder()
-            .homeserver_url(homeserver_url)
+            .server_name_or_homeserver_url(homeserver)
             .sqlite_store(&store_dir, Some(&passphrase))
             .build()
             .await
