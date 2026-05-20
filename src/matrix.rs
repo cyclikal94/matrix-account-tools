@@ -717,7 +717,4 @@ impl MatrixClient {
             .unwrap_or_default()
     }
 
-    pub fn homeserver_str(&self) -> String {
-        self.inner.homeserver().to_string()
-    }
 }

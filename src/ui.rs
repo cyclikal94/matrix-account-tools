@@ -156,19 +156,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Accounts => ":accounts",
     };
 
-    let account_str = match (&app.current_user_id, &app.matrix) {
-        (Some(uid), Some(client)) => {
-            let hs = client.homeserver_str();
-            let hs_host = hs
-                .trim_end_matches('/')
-                .trim_start_matches("https://")
-                .trim_start_matches("http://");
-            let local = uid.trim_start_matches('@').split(':').next().unwrap_or(uid);
-            format!("@{local}:{hs_host}")
-        }
-        (Some(uid), None) => uid.clone(),
-        _ => String::new(),
-    };
+    let account_str = app.current_user_id.clone().unwrap_or_default();
 
     // Right side: show "● Xs ago" once synced, "● syncing" until first sync, "● idle" if not connected.
     let (sync_label, sync_color) = match &app.matrix {

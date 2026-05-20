@@ -77,19 +77,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 .unwrap_or("—")
         });
 
-    let account_str = match (&app.current_user_id, &app.matrix) {
-        (Some(uid), Some(client)) => {
-            let hs = client.homeserver_str();
-            let hs_host = hs
-                .trim_end_matches('/')
-                .trim_start_matches("https://")
-                .trim_start_matches("http://");
-            let local = uid.trim_start_matches('@').split(':').next().unwrap_or(uid);
-            format!("@{local}:{hs_host}")
-        }
-        (Some(uid), None) => uid.clone(),
-        _ => "not signed in".to_owned(),
-    };
+    let account_str = app.current_user_id.clone().unwrap_or_else(|| "not signed in".to_owned());
 
     let room_count = app.rooms_tool.rooms.len();
     let total_unread: u64 = app.rooms_tool.rooms.iter().map(|r| r.unread).sum();

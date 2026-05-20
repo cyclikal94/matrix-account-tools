@@ -1121,14 +1121,14 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     if cw < 4 || inner.height < 4 { return; }
 
     let user_id = app.current_user_id.as_deref().unwrap_or("");
-    let homeserver = app.matrix.as_ref()
-        .map(|c| {
-            let hs = c.homeserver_str();
-            hs.trim_end_matches('/')
-                .trim_start_matches("https://")
-                .trim_start_matches("http://")
-                .to_owned()
-        })
+    let homeserver = app.accounts_tool.accounts
+        .iter()
+        .find(|a| Some(a.user_id.as_str()) == app.current_user_id.as_deref())
+        .map(|a| a.homeserver
+            .trim_end_matches('/')
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .to_owned())
         .unwrap_or_default();
 
     let avatar_letter = user_id
