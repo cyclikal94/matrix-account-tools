@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::app::{ActiveTool, App};
 use crate::tools::{ACCENT, ACCENT_DIM, BG2, BORDER, MUTED};
-use crate::tools::common::Cmd;
+use crate::tools::common::{Cmd, legend_help_lines};
 use crate::ui::centered_rect;
 
 pub fn draw_overlay(f: &mut Frame, app: &App) {
@@ -146,34 +146,7 @@ fn tool_help_lines(app: &App) -> Vec<Line<'static>> {
                 lines.push(row("r", "Refresh"));
                 lines.push(row("Esc / q", "Back to home"));
 
-                // Legend — only relevant when the room list is visible.
-                lines.push(Line::from(""));
-                lines.push(section("Legend"));
-                lines.push(Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled("●", Style::default().fg(ACCENT)),
-                    Span::styled(
-                        format!("{:<17}", " (green)"),
-                        Style::default().fg(ACCENT_DIM),
-                    ),
-                    Span::styled(
-                        "end-to-end encrypted",
-                        Style::default().fg(ratatui::style::Color::Rgb(237, 239, 242)),
-                    ),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled("●", Style::default().fg(MUTED)),
-                    Span::styled(
-                        format!("{:<17}", " (grey)"),
-                        Style::default().fg(ACCENT_DIM),
-                    ),
-                    Span::styled(
-                        "not end-to-end encrypted",
-                        Style::default().fg(ratatui::style::Color::Rgb(237, 239, 242)),
-                    ),
-                ]));
-                lines.push(row("dm", "direct message"));
+                lines.extend(legend_help_lines(crate::tools::rooms::LEGEND));
             }
             lines
         }

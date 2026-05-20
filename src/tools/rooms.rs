@@ -14,7 +14,13 @@ use tokio::sync::{mpsc, oneshot};
 use crate::app::{ActiveTool, App};
 use crate::matrix::{MemberInfo, RoomInfo};
 use crate::tools::{ACCENT, ACCENT_DIM, BG, BG3, BORDER, DANGER, FG, FG2, MUTED, MUTED2, SUCCESS, FilterState, Filterable, filter_hint_spans};
-use crate::tools::common::{copy_to_clipboard, handle_filter_keys};
+use crate::tools::common::{LegendEntry, copy_to_clipboard, handle_filter_keys};
+
+pub const LEGEND: &[LegendEntry] = &[
+    LegendEntry::new("●", ACCENT, "end-to-end encrypted"),
+    LegendEntry::new("●", MUTED,  "not end-to-end encrypted"),
+    LegendEntry::new("dm", MUTED, "direct message"),
+];
 use crate::ui::centered_rect;
 
 impl Filterable for RoomInfo {

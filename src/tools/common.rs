@@ -269,6 +269,54 @@ pub fn draw_list_block<T, F>(
 }
 
 // ---------------------------------------------------------------------------
+// Legend
+// ---------------------------------------------------------------------------
+
+/// One row in a tool's legend — a colored indicator symbol and its meaning.
+///
+/// Declare `pub const LEGEND: &[LegendEntry] = &[...]` alongside the CMDS table
+/// in each tool that has visual indicators. The help overlay picks it up automatically.
+#[derive(Debug, Clone, Copy)]
+pub struct LegendEntry {
+    /// The symbol shown in the list (e.g. `"●"`, `"dm"`).
+    pub symbol: &'static str,
+    /// Color the symbol is rendered with in the list.
+    pub color: Color,
+    /// Human-readable description shown in the help overlay.
+    pub desc: &'static str,
+}
+
+impl LegendEntry {
+    pub const fn new(symbol: &'static str, color: Color, desc: &'static str) -> Self {
+        Self { symbol, color, desc }
+    }
+}
+
+/// Generate a "Legend" section for the help overlay from a LEGEND slice.
+///
+/// Returns a blank line, the section header, and one row per entry — ready to
+/// `lines.extend(...)` into the help overlay's line list.
+pub fn legend_help_lines(entries: &[LegendEntry]) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Legend",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )),
+    ];
+    for entry in entries {
+        let pad = 18usize.saturating_sub(entry.symbol.chars().count());
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(entry.symbol, Style::default().fg(entry.color)),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(entry.desc, Style::default().fg(Color::Rgb(237, 239, 242))),
+        ]));
+    }
+    lines
+}
+
+// ---------------------------------------------------------------------------
 // Confirmation popup
 // ---------------------------------------------------------------------------
 
