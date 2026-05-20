@@ -442,6 +442,7 @@ async fn handle_devices_tab(app: &mut App, code: KeyCode) {
                 app.accounts_tool.devices_filter.clear();
             } else {
                 app.accounts_tool.detail_tab_focused = false;
+                app.accounts_tool.detail_open = false;
             }
         }
         KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -502,6 +503,7 @@ async fn handle_ignored_tab(app: &mut App, code: KeyCode) {
                 app.accounts_tool.ignored_filter.clear();
             } else {
                 app.accounts_tool.detail_tab_focused = false;
+                app.accounts_tool.detail_open = false;
             }
         }
         KeyCode::Char('q') | KeyCode::Char('Q') => {
