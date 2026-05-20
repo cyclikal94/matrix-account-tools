@@ -81,21 +81,24 @@ pub enum DeviceDeleteDialog {
 pub const CMDS_LIST: &[Cmd] = &[
     Cmd::new("j/k",   "navigate"),
     Cmd::new("Enter", "switch"),
-    Cmd::new("e",     "detail"),
+    Cmd::new("d",     "detail"),
+    Cmd::new("v",     "devices"),
+    Cmd::new("i",     "ignored"),
     Cmd::new("a",     "add"),
-    Cmd::danger("d",  "remove"),
+    Cmd::danger("x",  "remove"),
     Cmd::new("/",     "filter"),
     Cmd::new(":",     "command"),
     Cmd::new("Esc/q", "home"),
 ];
 
 pub const CMDS_DETAIL: &[Cmd] = &[
-    Cmd::new("j/k",      "navigate"),
-    Cmd::new("e/Enter",  "edit"),
-    Cmd::new("Tab/m",    "tabs"),
-    Cmd::new("r",        "reload"),
-    Cmd::new(":",        "command"),
-    Cmd::new("Esc/q",    "back"),
+    Cmd::new("j/k",     "navigate"),
+    Cmd::new("e/Enter", "edit"),
+    Cmd::new("v",       "devices"),
+    Cmd::new("i",       "ignored"),
+    Cmd::new("r",       "reload"),
+    Cmd::new(":",       "command"),
+    Cmd::new("Esc/q",   "back"),
 ];
 
 pub const CMDS_EDITING: &[Cmd] = &[
@@ -104,22 +107,24 @@ pub const CMDS_EDITING: &[Cmd] = &[
 ];
 
 pub const CMDS_DEVICES: &[Cmd] = &[
-    Cmd::new("j/k",    "navigate"),
-    Cmd::danger("d",   "sign out"),
-    Cmd::new("/",      "filter"),
-    Cmd::new("r",      "refresh"),
-    Cmd::new("Tab",    "switch tab"),
-    Cmd::new("Esc",    "back"),
+    Cmd::new("j/k",   "navigate"),
+    Cmd::danger("x",  "sign out"),
+    Cmd::new("/",     "filter"),
+    Cmd::new("r",     "refresh"),
+    Cmd::new("d",     "detail"),
+    Cmd::new("i",     "ignored"),
+    Cmd::new("Esc",   "back"),
 ];
 
 pub const CMDS_IGNORED: &[Cmd] = &[
-    Cmd::new("j/k",    "navigate"),
-    Cmd::new("a",      "add"),
-    Cmd::danger("d",   "unignore"),
-    Cmd::new("/",      "filter"),
-    Cmd::new("r",      "refresh"),
-    Cmd::new("Tab",    "switch tab"),
-    Cmd::new("Esc",    "back"),
+    Cmd::new("j/k",   "navigate"),
+    Cmd::new("a",     "add"),
+    Cmd::danger("x",  "unignore"),
+    Cmd::new("/",     "filter"),
+    Cmd::new("r",     "refresh"),
+    Cmd::new("d",     "detail"),
+    Cmd::new("v",     "devices"),
+    Cmd::new("Esc",   "back"),
 ];
 
 pub const CMDS_IGNORED_ADD: &[Cmd] = &[
@@ -176,6 +181,9 @@ pub struct AccountsToolState {
     pub ignored_load_rx: Option<oneshot::Receiver<Result<Vec<String>, String>>>,
     pub ignored_add_prompt: Option<String>,
     pub ignored_confirm_unignore: bool,
+
+    // Account removal confirmation
+    pub confirm_remove: bool,
 }
 
 impl Default for AccountsToolState {
@@ -213,6 +221,7 @@ impl Default for AccountsToolState {
             ignored_load_rx: None,
             ignored_add_prompt: None,
             ignored_confirm_unignore: false,
+            confirm_remove: false,
         }
     }
 }
@@ -255,6 +264,10 @@ fn filtered_ignored(app: &App) -> Vec<&String> {
 pub async fn handle(app: &mut App, code: KeyCode) {
     if app.accounts_tool.delete_dialog.is_some() {
         handle_delete_dialog(app, code).await;
+        return;
+    }
+    if app.accounts_tool.confirm_remove {
+        handle_remove_confirm(app, code).await;
         return;
     }
     if app.accounts_tool.ignored_confirm_unignore {
@@ -312,18 +325,29 @@ async fn handle_list(app: &mut App, code: KeyCode) {
         KeyCode::Enter => {
             do_switch_account(app).await;
         }
-        KeyCode::Char('e') => {
+        KeyCode::Char('d') | KeyCode::Char('e') => {
             app.accounts_tool.detail_open = true;
+            app.accounts_tool.detail_tab_focused = false;
         }
-        KeyCode::Tab => {
+        KeyCode::Char('v') => {
             app.accounts_tool.detail_open = true;
             app.accounts_tool.detail_tab_focused = true;
+            app.accounts_tool.active_tab = AccountTab::Devices;
+        }
+        KeyCode::Char('i') => {
+            app.accounts_tool.detail_open = true;
+            app.accounts_tool.detail_tab_focused = true;
+            app.accounts_tool.active_tab = AccountTab::IgnoredUsers;
         }
         KeyCode::Char('a') | KeyCode::Char('A') => {
             app.login = LoginState { can_go_back: true, ..LoginState::default() };
             app.screen = Screen::Login;
         }
-        KeyCode::Char('d') | KeyCode::Delete => do_remove_account(app).await,
+        KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Delete => {
+            if !filtered_accounts(app).is_empty() {
+                app.accounts_tool.confirm_remove = true;
+            }
+        }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             app.accounts_tool.loading = true;
             do_load_accounts(app).await;
@@ -382,8 +406,13 @@ async fn handle_detail(app: &mut App, code: KeyCode) {
             }
             app.accounts_tool.profile_error = None;
         }
-        KeyCode::Tab | KeyCode::Char('m') => {
+        KeyCode::Char('v') => {
             app.accounts_tool.detail_tab_focused = true;
+            app.accounts_tool.active_tab = AccountTab::Devices;
+        }
+        KeyCode::Char('i') => {
+            app.accounts_tool.detail_tab_focused = true;
+            app.accounts_tool.active_tab = AccountTab::IgnoredUsers;
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             start_profile_load(app);
@@ -419,7 +448,10 @@ async fn handle_devices_tab(app: &mut App, code: KeyCode) {
             app.accounts_tool.detail_tab_focused = false;
             app.accounts_tool.detail_open = false;
         }
-        KeyCode::Tab => {
+        KeyCode::Char('d') => {
+            app.accounts_tool.detail_tab_focused = false;
+        }
+        KeyCode::Char('i') => {
             app.accounts_tool.active_tab = AccountTab::IgnoredUsers;
             app.accounts_tool.devices_filter.clear();
         }
@@ -429,7 +461,7 @@ async fn handle_devices_tab(app: &mut App, code: KeyCode) {
             nav_down(&mut app.accounts_tool.devices_selected, len);
         }
         KeyCode::Char('k') | KeyCode::Up => nav_up(&mut app.accounts_tool.devices_selected),
-        KeyCode::Char('d') | KeyCode::Delete => {
+        KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Delete => {
             let devs = filtered_devices(app);
             if let Some(dev) = devs.get(app.accounts_tool.devices_selected) {
                 if dev.is_current {
@@ -476,7 +508,10 @@ async fn handle_ignored_tab(app: &mut App, code: KeyCode) {
             app.accounts_tool.detail_tab_focused = false;
             app.accounts_tool.detail_open = false;
         }
-        KeyCode::Tab => {
+        KeyCode::Char('d') => {
+            app.accounts_tool.detail_tab_focused = false;
+        }
+        KeyCode::Char('v') => {
             app.accounts_tool.active_tab = AccountTab::Devices;
             app.accounts_tool.ignored_filter.clear();
         }
@@ -490,7 +525,7 @@ async fn handle_ignored_tab(app: &mut App, code: KeyCode) {
             app.accounts_tool.ignored_add_prompt = Some(String::new());
             app.accounts_tool.ignored_error = None;
         }
-        KeyCode::Char('d') | KeyCode::Delete => {
+        KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Delete => {
             if !filtered_ignored(app).is_empty() {
                 app.accounts_tool.ignored_confirm_unignore = true;
             }
@@ -558,6 +593,18 @@ async fn handle_ignored_confirm(app: &mut App, code: KeyCode) {
         }
         _ => {
             app.accounts_tool.ignored_confirm_unignore = false;
+        }
+    }
+}
+
+async fn handle_remove_confirm(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            app.accounts_tool.confirm_remove = false;
+            do_remove_account(app).await;
+        }
+        _ => {
+            app.accounts_tool.confirm_remove = false;
         }
     }
 }
@@ -910,6 +957,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     if app.accounts_tool.filter.active {
         crate::ui::draw_filter_popup(f, &app.accounts_tool.filter, cols[0]);
     }
+    if app.accounts_tool.confirm_remove {
+        draw_remove_confirm(f, app);
+    }
 }
 
 fn draw_list_panel(f: &mut Frame, app: &App, area: Rect) {
@@ -1183,17 +1233,34 @@ fn draw_tab_section(f: &mut Frame, app: &App, area: Rect) {
     let border_color = if tab_focused { ACCENT } else { BORDER };
 
     let devices_active = app.accounts_tool.active_tab == AccountTab::Devices;
+
+    let devices_total = app.accounts_tool.devices.len();
+    let devices_matched = filtered_devices(app).len();
+    let devices_label = if !app.accounts_tool.devices_filter.input.is_empty() {
+        format!("Devices ({devices_matched}/{devices_total})")
+    } else {
+        format!("Devices ({devices_total})")
+    };
+
+    let ignored_total = app.accounts_tool.ignored_users.len();
+    let ignored_matched = filtered_ignored(app).len();
+    let ignored_label = if !app.accounts_tool.ignored_filter.input.is_empty() {
+        format!("Ignored Users ({ignored_matched}/{ignored_total})")
+    } else {
+        format!("Ignored Users ({ignored_total})")
+    };
+
     let tab_title = Line::from(vec![
         Span::raw(" "),
         Span::styled(
-            "Devices",
+            devices_label,
             Style::default()
                 .fg(if devices_active { ACCENT } else { MUTED })
                 .add_modifier(if devices_active { Modifier::BOLD } else { Modifier::empty() }),
         ),
         Span::styled("  ·  ", Style::default().fg(MUTED2)),
         Span::styled(
-            "Ignored Users",
+            ignored_label,
             Style::default()
                 .fg(if !devices_active { ACCENT } else { MUTED })
                 .add_modifier(if !devices_active { Modifier::BOLD } else { Modifier::empty() }),
@@ -1537,12 +1604,58 @@ fn draw_unignore_confirm(f: &mut Frame, app: &App) {
     );
 }
 
+fn draw_remove_confirm(f: &mut Frame, app: &App) {
+    let accounts = filtered_accounts(app);
+    let user_id = accounts
+        .get(app.accounts_tool.selected)
+        .map(|a| a.user_id.as_str())
+        .unwrap_or("this account")
+        .to_owned();
+
+    let area = f.area();
+    let popup = centered_rect(58, 7, area);
+    f.render_widget(Clear, popup);
+
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("  Remove account "),
+                Span::styled(user_id, Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD)),
+                Span::raw("?"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Enter/y", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
+                Span::raw("  confirm    "),
+                Span::styled("any other key", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
+                Span::raw("  cancel"),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .title(Span::styled(
+                    " Remove Account ",
+                    Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(DANGER))
+                .style(Style::default().bg(ratatui::style::Color::Rgb(25, 15, 15))),
+        )
+        .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Hint spans
 // ---------------------------------------------------------------------------
 
 pub fn hint_spans(app: &App) -> Vec<Span<'static>> {
     if app.accounts_tool.delete_dialog.is_some() {
+        return vec![];
+    }
+    if app.accounts_tool.confirm_remove {
         return vec![];
     }
     if app.accounts_tool.ignored_confirm_unignore {
