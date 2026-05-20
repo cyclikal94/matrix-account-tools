@@ -319,9 +319,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let title = if !app.devices.filter.input.is_empty() {
-        format!(" {match_count} / {total} device(s) ")
+        format!(" Devices ({match_count}/{total}) ")
     } else {
-        format!(" {total} device(s) ")
+        format!(" Devices ({total}) ")
     };
 
     let list = List::new(items)
@@ -361,7 +361,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     }
 
     if app.devices.filter.active {
-        crate::ui::draw_filter_popup(f, &app.devices.filter, match_count, total, area);
+        crate::ui::draw_filter_popup(f, &app.devices.filter, area);
     }
 }
 

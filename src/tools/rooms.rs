@@ -1061,7 +1061,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     if app.rooms_tool.filter.active {
         let total = app.rooms_tool.rooms.len();
         let match_count = app.rooms_tool.filtered_rooms().len();
-        crate::ui::draw_filter_popup(f, &app.rooms_tool.filter, match_count, total, cols[0]);
+        crate::ui::draw_filter_popup(f, &app.rooms_tool.filter, cols[0]);
     }
 }
 
@@ -1252,7 +1252,7 @@ fn draw_list_panel(f: &mut Frame, app: &App, area: Rect) {
             app.rooms_tool.checked.len()
         )
     } else if !app.rooms_tool.filter.input.is_empty() {
-        format!(" {filtered_count} / {total_rooms} rooms ")
+        format!(" Room List ({filtered_count}/{total_rooms}) ")
     } else {
         format!(" Room List ({total_rooms}) ")
     };
@@ -1596,7 +1596,7 @@ fn draw_members_block(f: &mut Frame, app: &App, area: Rect) {
             " Member Profile ".to_owned()
         }
     } else if member_filter_active {
-        format!(" Members ({member_filtered_count} / {member_count}) ")
+        format!(" Members ({member_filtered_count}/{member_count}) ")
     } else {
         format!(" Members ({member_count}) ")
     };
@@ -1823,7 +1823,7 @@ fn draw_members_block(f: &mut Frame, app: &App, area: Rect) {
 
     // Member filter popup
     if members_focused && ms.filter.active {
-        crate::ui::draw_filter_popup(f, &ms.filter, filtered_member_count, total_members, area);
+        crate::ui::draw_filter_popup(f, &ms.filter, area);
     }
 }
 

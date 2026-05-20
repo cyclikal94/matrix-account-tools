@@ -23,21 +23,17 @@ pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 }
 
 /// Minimal filter input popup, floating at the bottom of `area`.
-/// Column info lives in the status bar — this shows only the input and match count.
+/// Column info and match count live in the status bar — this shows only the input.
 /// Only call when `filter.active == true`.
 pub fn draw_filter_popup(
     f: &mut Frame,
     filter: &tools::FilterState,
-    match_count: usize,
-    total: usize,
     area: Rect,
 ) {
     let input = &filter.input;
-    let status = format!("{match_count}/{total}");
-    let status_len = status.chars().count() as u16;
     let input_len = input.chars().count() as u16;
-    // "  /  "(5) + input + "█"(1) + "  ·  "(5) + status + "  "(2)
-    let width = (5u16 + input_len + 1 + 5 + status_len + 2).max(24).min(area.width);
+    // "  /  "(5) + input + "█"(1) + "  "(2)
+    let width = (5u16 + input_len + 1 + 2).max(16).min(area.width);
     let height = 3u16;
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + area.height.saturating_sub(4);
@@ -49,8 +45,6 @@ pub fn draw_filter_popup(
             Span::styled("  /  ", Style::default().fg(ACCENT_DIM)),
             Span::styled(input.to_owned(), Style::default().fg(FG)),
             Span::styled("█", Style::default().fg(ACCENT_DIM)),
-            Span::styled("  ·  ", Style::default().fg(MUTED)),
-            Span::styled(status, Style::default().fg(MUTED)),
         ]))
         .block(
             Block::default()

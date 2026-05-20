@@ -281,9 +281,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let title = if !app.accounts_tool.filter.input.is_empty() {
-        format!(" {match_count} / {total} accounts ")
+        format!(" Accounts ({match_count}/{total}) ")
     } else {
-        format!(" {total} account(s) ")
+        format!(" Accounts ({total}) ")
     };
 
     let list = List::new(items)
@@ -319,7 +319,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     }
 
     if app.accounts_tool.filter.active {
-        crate::ui::draw_filter_popup(f, &app.accounts_tool.filter, match_count, total, area);
+        crate::ui::draw_filter_popup(f, &app.accounts_tool.filter, area);
     }
 }
 
